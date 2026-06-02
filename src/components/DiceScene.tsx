@@ -7,6 +7,10 @@ import {
   disposeMaterials,
 } from '../lib/diceFaceTextures';
 import { createValueSprite } from '../lib/valueSprite';
+import {
+  createPentagonalTrapezohedronGeometry,
+  getPentagonalTrapezohedronVertices,
+} from '../lib/d10Geometry';
 import type { ThrowRequest } from '../hooks/useDiceRoller';
 import { DICE_FACES, type DiceType, type RollResult } from '../types/dice';
 
@@ -586,11 +590,16 @@ function createColliderDesc(
       return rapier.ColliderDesc.ball(0.45);
     case 'd6':
       return rapier.ColliderDesc.cuboid(0.375, 0.375, 0.375);
-    case 'd8':
     case 'd10':
+    case 'd100': {
+      // Real pentagonal-trapezohedron hull so dice can actually rest on a face.
+      const verts = getPentagonalTrapezohedronVertices(0.6);
+      const hull = rapier.ColliderDesc.convexHull(verts);
+      return hull ?? rapier.ColliderDesc.ball(0.55);
+    }
+    case 'd8':
     case 'd12':
     case 'd20':
-    case 'd100':
       return rapier.ColliderDesc.ball(0.55);
   }
 }
@@ -755,12 +764,11 @@ function createGeometry(type: DiceType): THREE.BufferGeometry {
     case 'd8':
       return new THREE.OctahedronGeometry(0.6);
     case 'd10':
-      return new THREE.OctahedronGeometry(0.6, 0);
+    case 'd100':
+      return createPentagonalTrapezohedronGeometry(0.6);
     case 'd12':
       return new THREE.DodecahedronGeometry(0.55);
     case 'd20':
-      return new THREE.IcosahedronGeometry(0.6);
-    case 'd100':
       return new THREE.IcosahedronGeometry(0.6);
   }
 }

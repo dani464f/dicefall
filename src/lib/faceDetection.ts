@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { DiceType } from '../types/dice';
+import { createPentagonalTrapezohedronGeometry } from './d10Geometry';
 
 /**
  * After a die settles, we read which face is pointing "up" (or "down" for the
@@ -36,8 +37,10 @@ const PHYSICS_DICE: ReadonlySet<DiceType> = new Set<DiceType>([
   'd4',
   'd6',
   'd8',
+  'd10',
   'd12',
   'd20',
+  'd100',
 ]);
 
 export function isPhysicsDie(t: DiceType): boolean {
@@ -170,6 +173,30 @@ function buildFromGeometry(
   return { readDirection, faces: labelFaces(normals) };
 }
 
+function buildD10(): DieTable {
+  return buildFromGeometry(
+    createPentagonalTrapezohedronGeometry(1),
+    10,
+    'up',
+  );
+}
+
+function buildD100(): DieTable {
+  // Same geometry as D10; each face value × 10 (10, 20, …, 100).
+  const base = buildFromGeometry(
+    createPentagonalTrapezohedronGeometry(1),
+    10,
+    'up',
+  );
+  return {
+    readDirection: base.readDirection,
+    faces: base.faces.map((f) => ({
+      localNormal: f.localNormal,
+      value: f.value * 10,
+    })),
+  };
+}
+
 let TABLES: Partial<Record<DiceType, DieTable>> | null = null;
 function getTables(): Partial<Record<DiceType, DieTable>> {
   if (TABLES) return TABLES;
@@ -177,8 +204,10 @@ function getTables(): Partial<Record<DiceType, DieTable>> {
     d4: buildFromGeometry(new THREE.TetrahedronGeometry(1, 0), 4, 'down'),
     d6: D6,
     d8: buildD8(),
+    d10: buildD10(),
     d12: buildFromGeometry(new THREE.DodecahedronGeometry(1, 0), 12, 'up'),
     d20: buildFromGeometry(new THREE.IcosahedronGeometry(1, 0), 20, 'up'),
+    d100: buildD100(),
   };
   return TABLES;
 }
