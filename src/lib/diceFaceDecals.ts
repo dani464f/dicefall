@@ -116,25 +116,31 @@ export function paintFaceDecals(
   for (const entry of entries) {
     const tex = paintNumber(entry.value);
     // MeshBasicMaterial so the ink is always at its painted color, not
-    // washed out by the die's shadow side.
+    // washed out by the die's shadow side. DoubleSide so culling never hides
+    // the decal regardless of how lookAt() oriented the plane.
     const mat = new THREE.MeshBasicMaterial({
       map: tex,
       transparent: true,
       alphaTest: 0.08,
+      side: THREE.DoubleSide,
       polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -1,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
     });
     const planeGeom = new THREE.PlaneGeometry(planeSize, planeSize);
     const decal = new THREE.Mesh(planeGeom, mat);
-    // Position slightly outside the face surface
+    // Position outside the face surface
     decal.position.copy(entry.localNormal).multiplyScalar(inradius * DECAL_OFFSET);
-    // Orient so the plane's painted (+Z) side points outward. Object3D.lookAt
-    // points -Z at the target, so look at the origin → +Z points outward.
-    decal.lookAt(0, 0, 0);
+    // Orient so the plane lies flush with the face. Build the quaternion
+    // directly: rotate the plane's default normal (0,0,1) onto the outward
+    // face normal. (Robust even when the decal isn't yet parented.)
+    decal.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 0, 1),
+      entry.localNormal.clone().normalize(),
+    );
     decal.castShadow = false;
     decal.receiveShadow = false;
-    decal.renderOrder = 1;
+    decal.renderOrder = 2;
 
     parent.add(decal);
     resources.push({
