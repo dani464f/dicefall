@@ -1,73 +1,80 @@
-# React + TypeScript + Vite
+# Dicefall
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A premium, mobile-first tabletop dice roller that uses real physics so the number you see is the face the die actually lands on.
 
-Currently, two official plugins are available:
+> Generic tabletop RPG dice. Not affiliated with Dungeons & Dragons or any other trademark holder.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Status
 
-## React Compiler
+- D4, D6, D8, D12, D20 — **physics-driven**: the scene throws the die, watches it settle, reads the upward face.
+- D10, D100 — fair RNG fallback (custom pentagonal trapezohedron geometry still being built).
+- Presets and roll history persist to `localStorage`.
+- Settings: reduced motion (auto / animated / reduced), sound + haptics placeholders.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Run locally
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Open the printed URL (usually `http://localhost:5173`). The app is mobile-first — use your browser's device toolbar to see it at phone width.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Build
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run build
+npm run preview
 ```
+
+The production build outputs to `dist/`.
+
+## Deploy to Vercel
+
+A `vercel.json` is included with SPA rewrites and a `Cache-Control` header for the Rapier WASM payload.
+
+```bash
+npx vercel
+```
+
+Or push to GitHub and import the repo at <https://vercel.com/new>.
+
+## Tech
+
+- React 19 + TypeScript + Vite
+- Tailwind CSS v4 (CSS-first theme tokens — see `src/index.css`)
+- three.js (vanilla — React Three Fiber currently fails to initialize on React 19.2 in this build; we may revisit)
+- `@dimforge/rapier3d-compat` for physics (WASM)
+
+## Project layout
+
+```
+src/
+  components/
+    DiceScene.tsx        ← three.js renderer + Rapier physics + face detection
+    DiceTray.tsx         ← stacked 3D canvas + 2D result overlay
+    DiceSelector.tsx     ← D4..D100 grid
+    RollControls.tsx     ← quantity / modifier steppers
+    ResultPanel.tsx      ← total / chips / awaiting-roll
+    Sheet.tsx            ← reusable bottom-drawer
+    PresetsPanel.tsx
+    RollHistory.tsx
+    SettingsPanel.tsx
+  hooks/
+    useDiceRoller.ts     ← physics throw flow + legacy RNG flow
+    useLocalStorage.ts
+  lib/
+    dice.ts              ← rollDice (fair RNG, used as fallback)
+    physics.ts           ← Rapier loader
+    faceDetection.ts     ← per-die-type face-normal tables + upward-face lookup
+    diceFaceTextures.ts  ← D6 pip textures
+    valueSprite.ts       ← floating value labels for D4/D8/D12/D20
+  types/dice.ts
+  App.tsx
+  main.tsx
+  index.css
+```
+
+## License
+
+Personal project. Not licensed for redistribution.
