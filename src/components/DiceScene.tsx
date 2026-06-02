@@ -183,29 +183,29 @@ function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
   camera.position.set(0, 5.5, 6.5);
   camera.lookAt(0, 0, 0);
 
-  // --- Tavern lighting ---------------------------------------------------
-  // Warm low ambient so unlit areas read as candle-lit, not sterile.
-  scene.add(new THREE.AmbientLight(0x6a4a30, 0.32));
-  // Soft hemisphere fill: warm sky / dark wood ground.
-  scene.add(new THREE.HemisphereLight(0x8a5e3a, 0x180c06, 0.55));
+  // --- Tavern lighting (cranked so the polished dice + gold engravings
+  //     actually catch the room without going neon).
+  scene.add(new THREE.AmbientLight(0xb88a5a, 0.65));
+  scene.add(new THREE.HemisphereLight(0xbb8a5a, 0x1c0e08, 0.95));
 
-  // Candle key light from the upper-left — strong amber pool.
-  const candle = new THREE.PointLight(0xffb878, 90, 22, 1.4);
-  candle.position.set(-3.4, 4.6, 3.6);
+  // Candle key light — bright amber pool from upper-left.
+  const candle = new THREE.PointLight(0xffc890, 180, 24, 1.2);
+  candle.position.set(-3.2, 4.6, 3.4);
   candle.castShadow = true;
   candle.shadow.mapSize.set(1024, 1024);
   candle.shadow.bias = -0.0008;
   candle.shadow.radius = 4;
   scene.add(candle);
 
-  // Back-rim light — picks out the dice silhouette from the dark wood.
-  const rim = new THREE.PointLight(0xc9a45c, 18, 16, 1.4);
-  rim.position.set(2.6, 3.4, -3);
+  // Back-rim — picks out dice silhouettes from the dark wood.
+  const rim = new THREE.PointLight(0xe2bc7a, 40, 18, 1.3);
+  rim.position.set(2.8, 3.5, -3);
   scene.add(rim);
 
-  // Tiny direct top fill so the leather doesn't go fully black under dice.
-  const top = new THREE.DirectionalLight(0xffe2b0, 0.45);
-  top.position.set(0, 6, 0);
+  // Direct top fill so the leather and gold decals always have a wash to
+  // play off, instead of dropping into black on the candle's shadow side.
+  const top = new THREE.DirectionalLight(0xffe2b0, 1.4);
+  top.position.set(0.5, 8, 1);
   scene.add(top);
 
   // --- Tavern tabletop (dark walnut, extends past the camera frustum) ---

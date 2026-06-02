@@ -3,29 +3,30 @@ import { getFaceEntries } from './faceDetection';
 import type { DiceType } from '../types/dice';
 
 /**
- * Paint the actual face value of each die directly onto each face, using the
- * same face-entry table that drives result detection — so the value visible
- * on top of a settled die is always what the scene reports.
+ * Paint each face of a die with its actual detected value using a small
+ * OPAQUE gold disc — no transparency, no alphaTest, no culling tricks.
+ * The disc is sized to fit safely inside the face boundary so it never
+ * leaks over an edge.
  *
- * D6 is excluded (its pips are baked into the BoxGeometry per-face materials).
+ * D6 is excluded — pips are baked into its per-face materials already.
  */
 
-// Decal plane size per die type. Sized to comfortably fit the inscribed
-// circle of each face — small enough not to leak over an edge, large enough
-// to read from camera distance. (Bumped up — readability beats overflow.)
+// Plane size per die type, hand-tuned to fit comfortably inside each face's
+// inscribed circle (no overhang).
 const DECAL_SIZE: Partial<Record<DiceType, number>> = {
-  d4: 0.55,
-  d8: 0.48,
-  d10: 0.48,
-  d12: 0.48,
-  d20: 0.40,
-  d100: 0.48,
+  d4: 0.28,
+  d8: 0.26,
+  d10: 0.28,
+  d12: 0.28,
+  d20: 0.20,
+  d100: 0.28,
 };
 
-// Push the decal noticeably outside the face plane so it can't z-fight with
-// the die's surface even on faces seen at glancing angles. The disc is small
-// relative to the die so the offset doesn't read as "floating".
-const DECAL_OFFSET = 1.06;
+const DECAL_OFFSET = 1.005;
+
+const BG_GOLD = '#d4af6b';
+const BG_GOLD_DARK = '#a8854a';
+const INK = '#15090a';
 
 function computeInradius(geom: THREE.BufferGeometry): number {
   const pos = geom.attributes.position as THREE.BufferAttribute;
@@ -37,36 +38,55 @@ function computeInradius(geom: THREE.BufferGeometry): number {
   return a.add(b).add(c).divideScalar(3).length();
 }
 
-function paintNumber(value: number): THREE.CanvasTexture {
-  const size = 128;
+function createDiscTexture(value: number): THREE.CanvasTexture {
+  const size = 256;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Canvas 2D unavailable');
 
-  // Transparent background — only the digits get painted, the die's surface
-  // shows through everywhere else.
-  ctx.clearRect(0, 0, size, size);
+  // Filled gold disc background — fully opaque, no transparency edges.
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = size * 0.46;
+  // Outer gradient: brighter gold center, darker edges
+  const grad = ctx.createRadialGradient(cx, cy * 0.85, r * 0.2, cx, cy, r);
+  grad.addColorStop(0, '#f3cf86');
+  grad.addColorStop(0.5, BG_GOLD);
+  grad.addColorStop(1, BG_GOLD_DARK);
 
-  // Bright gold glyph engraved into the polished black die. No disc backing —
-  // we want the number to read as engraved metal, not a sticker.
-  ctx.fillStyle = '#f3cf86';
+  // First fill the whole canvas with the disc edge color so the corners of
+  // the plane (outside the disc) blend with the rim, hiding the square edge
+  // against the dark die surface.
+  ctx.fillStyle = BG_GOLD_DARK;
+  ctx.fillRect(0, 0, size, size);
+
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Dark engraved-looking border ring.
+  ctx.strokeStyle = '#3a2515';
+  ctx.lineWidth = size * 0.02;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Number — dark ink so it reads as engraved on the gold disc.
+  ctx.fillStyle = INK;
   const px =
-    value >= 100 ? size * 0.36 : value >= 10 ? size * 0.46 : size * 0.56;
-  ctx.font = `700 ${Math.round(px)}px Georgia, "Times New Roman", serif`;
+    value >= 100 ? size * 0.42 : value >= 10 ? size * 0.5 : size * 0.6;
+  ctx.font = `800 ${Math.round(px)}px Georgia, "Times New Roman", serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(String(value), size / 2, size / 2 + size * 0.04);
+  ctx.fillText(String(value), cx, cy + size * 0.025);
 
-  // For 6 and 9 — and any number that could read upside-down — underline the
-  // glyph so orientation is unambiguous.
-  const ambiguous = value === 6 || value === 9 || value === 11;
-  if (ambiguous) {
-    const w = size * 0.22;
-    const h = size * 0.025;
-    const x = (size - w) / 2;
-    const y = size * 0.74;
-    ctx.fillRect(x, y, w, h);
+  // Tiny underline on numbers that could read upside-down (6, 9, 11).
+  if (value === 6 || value === 9 || value === 11) {
+    const w = size * 0.15;
+    const h = size * 0.022;
+    ctx.fillRect((size - w) / 2, size * 0.71, w, h);
   }
 
   const tex = new THREE.CanvasTexture(canvas);
@@ -79,15 +99,10 @@ function paintNumber(value: number): THREE.CanvasTexture {
 interface DecalResource {
   mesh: THREE.Mesh;
   texture: THREE.CanvasTexture;
-  material: THREE.MeshBasicMaterial;
+  material: THREE.MeshStandardMaterial;
   geometry: THREE.PlaneGeometry;
 }
 
-/**
- * Add a textured plane to each face of the die mesh, showing the face's
- * assigned value. Returns the decal resources so they can be disposed when
- * the die is removed.
- */
 export function paintFaceDecals(
   parent: THREE.Mesh,
   diceType: DiceType,
@@ -100,18 +115,17 @@ export function paintFaceDecals(
   const inradius = computeInradius(geom);
   if (inradius <= 0) return [];
 
-  const planeSize = DECAL_SIZE[diceType] ?? inradius * 0.7;
+  const planeSize = DECAL_SIZE[diceType] ?? inradius * 0.45;
   const resources: DecalResource[] = [];
 
   for (const entry of entries) {
-    const tex = paintNumber(entry.value);
-    // MeshBasicMaterial so the ink is always at its painted color, not
-    // washed out by the die's shadow side. DoubleSide so culling never hides
-    // the decal regardless of how lookAt() oriented the plane.
-    const mat = new THREE.MeshBasicMaterial({
+    const tex = createDiscTexture(entry.value);
+    // OPAQUE material — solid gold disc baked into the texture. No
+    // transparency, no alphaTest. Picks up scene lighting like real metal.
+    const mat = new THREE.MeshStandardMaterial({
       map: tex,
-      transparent: true,
-      alphaTest: 0.08,
+      roughness: 0.35,
+      metalness: 0.55,
       side: THREE.DoubleSide,
       polygonOffset: true,
       polygonOffsetFactor: -2,
@@ -119,19 +133,18 @@ export function paintFaceDecals(
     });
     const planeGeom = new THREE.PlaneGeometry(planeSize, planeSize);
     const decal = new THREE.Mesh(planeGeom, mat);
-    // Position outside the face surface
-    decal.position.copy(entry.localNormal).multiplyScalar(inradius * DECAL_OFFSET);
-    // Orient so the plane lies flush with the face. Build the quaternion
-    // directly: rotate the plane's default normal (0,0,1) onto the outward
-    // face normal. (Robust even when the decal isn't yet parented.)
+    decal.position
+      .copy(entry.localNormal)
+      .multiplyScalar(inradius * DECAL_OFFSET);
+    // Plane's +Z onto outward face normal — quaternion math, no lookAt
+    // dependencies on parenting state.
     decal.quaternion.setFromUnitVectors(
       new THREE.Vector3(0, 0, 1),
       entry.localNormal.clone().normalize(),
     );
     decal.castShadow = false;
-    decal.receiveShadow = false;
+    decal.receiveShadow = true;
     decal.renderOrder = 2;
-
     parent.add(decal);
     resources.push({
       mesh: decal,
@@ -140,7 +153,6 @@ export function paintFaceDecals(
       geometry: planeGeom,
     });
   }
-
   return resources;
 }
 
