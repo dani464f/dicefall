@@ -178,36 +178,95 @@ function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
-  camera.position.set(0, 4.2, 4.6);
+  // Cinematic top-down angled camera per the tavern brief.
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
+  camera.position.set(0, 5.5, 6.5);
   camera.lookAt(0, 0, 0);
 
-  scene.add(new THREE.AmbientLight(0xfff0d0, 0.45));
-  const key = new THREE.DirectionalLight(0xffe6bf, 1.6);
-  key.position.set(3.5, 8, 4);
-  key.castShadow = true;
-  key.shadow.mapSize.set(1024, 1024);
-  key.shadow.camera.left = -5;
-  key.shadow.camera.right = 5;
-  key.shadow.camera.top = 5;
-  key.shadow.camera.bottom = -5;
-  key.shadow.bias = -0.0008;
-  scene.add(key);
-  const rim = new THREE.PointLight(0x6f8cff, 0.35);
-  rim.position.set(-3, 3, -2);
+  // --- Tavern lighting ---------------------------------------------------
+  // Warm low ambient so unlit areas read as candle-lit, not sterile.
+  scene.add(new THREE.AmbientLight(0x6a4a30, 0.32));
+  // Soft hemisphere fill: warm sky / dark wood ground.
+  scene.add(new THREE.HemisphereLight(0x8a5e3a, 0x180c06, 0.55));
+
+  // Candle key light from the upper-left — strong amber pool.
+  const candle = new THREE.PointLight(0xffb878, 90, 22, 1.4);
+  candle.position.set(-3.4, 4.6, 3.6);
+  candle.castShadow = true;
+  candle.shadow.mapSize.set(1024, 1024);
+  candle.shadow.bias = -0.0008;
+  candle.shadow.radius = 4;
+  scene.add(candle);
+
+  // Back-rim light — picks out the dice silhouette from the dark wood.
+  const rim = new THREE.PointLight(0xc9a45c, 18, 16, 1.4);
+  rim.position.set(2.6, 3.4, -3);
   scene.add(rim);
 
-  const tableGeom = new THREE.PlaneGeometry(14, 12);
+  // Tiny direct top fill so the leather doesn't go fully black under dice.
+  const top = new THREE.DirectionalLight(0xffe2b0, 0.45);
+  top.position.set(0, 6, 0);
+  scene.add(top);
+
+  // --- Tavern tabletop (dark walnut, extends past the camera frustum) ---
+  const tableGeom = new THREE.PlaneGeometry(22, 20);
   const tableMat = new THREE.MeshStandardMaterial({
-    color: 0x2a1d16,
-    roughness: 0.94,
-    metalness: 0.04,
+    color: 0x18100a,
+    roughness: 0.92,
+    metalness: 0.05,
   });
   const table = new THREE.Mesh(tableGeom, tableMat);
   table.rotation.x = -Math.PI / 2;
-  table.position.y = -0.01;
+  table.position.y = -0.06;
   table.receiveShadow = true;
   scene.add(table);
+
+  // --- Dice tray: leather floor inside, wooden rails around ---
+  const trayFloorGeom = new THREE.PlaneGeometry(4.2, 4.2);
+  const trayFloorMat = new THREE.MeshStandardMaterial({
+    color: 0x1c0d06,
+    roughness: 0.88,
+    metalness: 0.02,
+  });
+  const trayFloor = new THREE.Mesh(trayFloorGeom, trayFloorMat);
+  trayFloor.rotation.x = -Math.PI / 2;
+  trayFloor.position.y = 0;
+  trayFloor.receiveShadow = true;
+  scene.add(trayFloor);
+
+  // Wooden rail walls — walnut with a slight sheen on top edges.
+  const railMat = new THREE.MeshStandardMaterial({
+    color: 0x3b2114,
+    roughness: 0.7,
+    metalness: 0.08,
+  });
+  const railH = 0.35;
+  const railT = 0.22;
+  const inner = 2.1;
+  const outer = inner + railT;
+  // Two long rails (X-aligned, front & back) and two short rails (Z-aligned).
+  const railNS = new THREE.BoxGeometry(outer * 2, railH, railT);
+  const railEW = new THREE.BoxGeometry(railT, railH, outer * 2);
+  const railNorth = new THREE.Mesh(railNS, railMat);
+  railNorth.position.set(0, railH / 2, -inner - railT / 2);
+  railNorth.castShadow = true;
+  railNorth.receiveShadow = true;
+  scene.add(railNorth);
+  const railSouth = new THREE.Mesh(railNS, railMat);
+  railSouth.position.set(0, railH / 2, inner + railT / 2);
+  railSouth.castShadow = true;
+  railSouth.receiveShadow = true;
+  scene.add(railSouth);
+  const railEast = new THREE.Mesh(railEW, railMat);
+  railEast.position.set(inner + railT / 2, railH / 2, 0);
+  railEast.castShadow = true;
+  railEast.receiveShadow = true;
+  scene.add(railEast);
+  const railWest = new THREE.Mesh(railEW, railMat);
+  railWest.position.set(-inner - railT / 2, railH / 2, 0);
+  railWest.castShadow = true;
+  railWest.receiveShadow = true;
+  scene.add(railWest);
 
   renderer.domElement.style.display = 'block';
   renderer.domElement.style.width = '100%';
@@ -365,6 +424,11 @@ function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
     physics?.dispose();
     tableGeom.dispose();
     tableMat.dispose();
+    trayFloorGeom.dispose();
+    trayFloorMat.dispose();
+    railNS.dispose();
+    railEW.dispose();
+    railMat.dispose();
     renderer.dispose();
     if (renderer.domElement.parentNode === mount) {
       mount.removeChild(renderer.domElement);
@@ -433,13 +497,16 @@ function createThrowDie(
 ): ThrowDie {
   const { rapier, world } = physics;
   const geom = createGeometry(type);
+  // Polished black tavern dice. Gold detail comes from the face decals/pips.
+  // Slightly elevated base color + lower roughness so the candle highlights
+  // skate across each facet rather than disappearing into matte black.
   const materials: THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[] =
     type === 'd6'
       ? createD6Materials()
       : new THREE.MeshStandardMaterial({
-          color: 0xe8d4a8,
-          roughness: 0.45,
-          metalness: 0.15,
+          color: 0x201612,
+          roughness: 0.28,
+          metalness: 0.55,
         });
   const mesh = new THREE.Mesh(geom, materials);
   mesh.castShadow = true;

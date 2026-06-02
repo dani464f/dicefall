@@ -6,94 +6,83 @@ interface ResultPanelProps {
 }
 
 /**
- * Overlay on top of the 3D dice scene.
- *  - Empty: centered "Awaiting roll" placeholder.
- *  - Rolling: nothing — the 3D dice carry the moment.
- *  - Settled: total at the top, individual chips at the bottom; 3D dice
- *    remain visible between them.
+ * Tavern result frame — dark translucent panel with thin gold border and
+ * a serif RESULT / TOTAL split. Sits in the lower-middle of the overlay
+ * stack so it doesn't compete with the dice in the tray.
  */
 export function ResultPanel({ result, isRolling }: ResultPanelProps) {
-  if (!result) {
-    return (
-      <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
-        <EmptyState />
-      </div>
-    );
-  }
-
-  if (isRolling) {
+  if (!result || isRolling) {
     return null;
   }
 
-  const { diceType, quantity, modifier, individualResults, total } = result;
-  const formula = formatFormula(diceType, quantity, modifier);
+  const { individualResults, modifier, total } = result;
+  const subtotal = individualResults.reduce((a, b) => a + b, 0);
+  const hasModifier = modifier !== 0;
+  const expression = hasModifier
+    ? `${subtotal} ${modifier > 0 ? '+' : '−'} ${Math.abs(modifier)}`
+    : `${subtotal}`;
 
   return (
     <div
-      className="absolute inset-0 z-20 flex flex-col items-center justify-between pointer-events-none px-4 py-5 select-none"
-      style={{ animation: 'totalReveal 320ms cubic-bezier(0.2, 0.7, 0.2, 1) both' }}
+      className="relative w-full px-5 py-3 select-none"
+      style={{
+        background:
+          'linear-gradient(180deg, rgba(20,12,8,0.78) 0%, rgba(10,6,3,0.85) 100%)',
+        border: '1px solid rgba(201, 164, 92, 0.55)',
+        borderRadius: '10px',
+        boxShadow:
+          '0 8px 24px rgba(0,0,0,0.6), inset 0 0 12px rgba(0,0,0,0.45)',
+        animation: 'totalReveal 320ms cubic-bezier(0.2, 0.7, 0.2, 1) both',
+      }}
     >
-      <div className="flex flex-col items-center gap-1">
-        <p className="text-[10px] uppercase tracking-[0.3em] text-secondary/80">
-          Total
-        </p>
-        <p className="font-display text-[72px] text-ivory leading-none tabular-nums drop-shadow-[0_2px_12px_rgba(201,164,92,0.25)]">
-          {total}
-        </p>
-        <p className="font-display text-sm text-secondary tracking-wide">
-          {formula}
-        </p>
-      </div>
-
-      <div className="flex flex-col items-center gap-1.5">
-        <DieChips values={individualResults} />
-        {modifier !== 0 && (
-          <p className="text-[10px] uppercase tracking-[0.2em] text-secondary/80">
-            {modifier > 0 ? `+${modifier}` : `${modifier}`} modifier
+      <FantasyCorners />
+      <div className="grid grid-cols-2 gap-3 items-center text-center">
+        <div className="flex flex-col items-center">
+          <p className="text-[9px] uppercase tracking-[0.3em] text-gold/70">
+            Result
           </p>
-        )}
+          <p className="font-display text-2xl text-ivory tabular-nums">
+            {expression}
+          </p>
+        </div>
+        <div className="flex flex-col items-center border-l border-gold/30">
+          <p className="text-[9px] uppercase tracking-[0.3em] text-gold/70">
+            Total
+          </p>
+          <p
+            className="font-display text-4xl text-gold tabular-nums leading-none"
+            style={{ textShadow: '0 0 14px rgba(201,164,92,0.45)' }}
+          >
+            {total}
+          </p>
+        </div>
       </div>
     </div>
   );
 }
 
-function EmptyState() {
+function FantasyCorners() {
+  // Four small gold corner ornaments — purely decorative.
+  const cornerStyle =
+    'absolute w-3 h-3 border-gold pointer-events-none';
   return (
-    <div className="flex flex-col items-center justify-center text-center gap-2">
-      <p className="text-xs uppercase tracking-[0.25em] text-secondary/70">
-        Awaiting roll
-      </p>
-      <p className="font-display text-7xl text-ivory/30 leading-none">—</p>
-    </div>
+    <>
+      <span
+        className={cornerStyle}
+        style={{ top: -1, left: -1, borderTop: '1px solid', borderLeft: '1px solid' }}
+      />
+      <span
+        className={cornerStyle}
+        style={{ top: -1, right: -1, borderTop: '1px solid', borderRight: '1px solid' }}
+      />
+      <span
+        className={cornerStyle}
+        style={{ bottom: -1, left: -1, borderBottom: '1px solid', borderLeft: '1px solid' }}
+      />
+      <span
+        className={cornerStyle}
+        style={{ bottom: -1, right: -1, borderBottom: '1px solid', borderRight: '1px solid' }}
+      />
+    </>
   );
-}
-
-interface DieChipsProps {
-  values: number[];
-}
-
-function DieChips({ values }: DieChipsProps) {
-  return (
-    <div className="flex flex-wrap justify-center gap-1.5 max-w-full">
-      {values.map((n, i) => (
-        <span
-          key={i}
-          className="min-w-[32px] h-7 px-1.5 rounded bg-tray-deep/85 border border-gold/30 text-ivory font-display text-sm tabular-nums flex items-center justify-center shadow-[0_2px_6px_rgba(0,0,0,0.5)]"
-        >
-          {n}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function formatFormula(
-  diceType: string,
-  quantity: number,
-  modifier: number,
-): string {
-  const base = `${quantity}${diceType}`;
-  if (modifier === 0) return base;
-  if (modifier > 0) return `${base} + ${modifier}`;
-  return `${base} − ${Math.abs(modifier)}`;
 }

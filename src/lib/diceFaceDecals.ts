@@ -48,19 +48,9 @@ function paintNumber(value: number): THREE.CanvasTexture {
   // shows through everywhere else.
   ctx.clearRect(0, 0, size, size);
 
-  // Filled disc badge behind the number so the glyph is unambiguous against
-  // the die's bone color and stays readable when the face is in shadow.
-  ctx.fillStyle = 'rgba(27, 18, 13, 0.85)';
-  ctx.beginPath();
-  ctx.arc(size / 2, size / 2, size * 0.42, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.lineWidth = size * 0.025;
-  ctx.strokeStyle = '#c9a45c';
-  ctx.stroke();
-
-  // Painted glyph in cream so it pops on the dark disc and reads on every
-  // face regardless of lighting.
-  ctx.fillStyle = '#f4e8d0';
+  // Bright gold glyph engraved into the polished black die. No disc backing —
+  // we want the number to read as engraved metal, not a sticker.
+  ctx.fillStyle = '#f3cf86';
   const px =
     value >= 100 ? size * 0.36 : value >= 10 ? size * 0.46 : size * 0.56;
   ctx.font = `700 ${Math.round(px)}px Georgia, "Times New Roman", serif`;

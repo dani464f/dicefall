@@ -17,10 +17,11 @@ import * as THREE from 'three';
  */
 const D6_FACE_VALUES_BY_AXIS: readonly number[] = [3, 4, 1, 6, 2, 5];
 
-const BG = '#e8d4a8';
-const BG_DEEP = '#d6c190';
-const INK = '#1b120d';
-const PIP_BG = '#3a2818';
+// Black tavern D6 with gold pips.
+const BG = '#110a08';
+const BG_DEEP = '#1a1108';
+const INK = '#d4af6b';
+const PIP_BG = '#3a2515';
 
 function createCanvas(size: number): {
   canvas: HTMLCanvasElement;
