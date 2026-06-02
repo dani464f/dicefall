@@ -6,7 +6,7 @@ import {
   createD6Materials,
   disposeMaterials,
 } from '../lib/diceFaceTextures';
-import { paintFaceDecals, disposeFaceDecals } from '../lib/diceFaceDecals';
+import { buildFaceBakedDie, disposeFaceMaterials } from '../lib/dieFaceMaterials';
 import {
   createPentagonalTrapezohedronGeometry,
   getPentagonalTrapezohedronVertices,
@@ -496,25 +496,33 @@ function createThrowDie(
   physics: PhysicsBundle,
 ): ThrowDie {
   const { rapier, world } = physics;
-  const geom = createGeometry(type);
-  // Polished black tavern dice. Gold detail comes from the face decals/pips.
-  // Slightly elevated base color + lower roughness so the candle highlights
-  // skate across each facet rather than disappearing into matte black.
-  const materials: THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[] =
-    type === 'd6'
-      ? createD6Materials()
-      : new THREE.MeshStandardMaterial({
-          color: 0x201612,
-          roughness: 0.28,
-          metalness: 0.55,
-        });
+  const rawGeom = createGeometry(type);
+
+  // For non-D6 dice, rebuild the geometry with per-face groups + a per-face
+  // materials array so each face actually shows its number. D6 keeps its
+  // pip-baked BoxGeometry path.
+  let geom: THREE.BufferGeometry;
+  let materials: THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[];
+  if (type === 'd6') {
+    geom = rawGeom;
+    materials = createD6Materials();
+  } else {
+    const bundle = buildFaceBakedDie(type, rawGeom);
+    if (bundle) {
+      geom = bundle.geom;
+      materials = bundle.materials;
+    } else {
+      geom = rawGeom;
+      materials = new THREE.MeshStandardMaterial({
+        color: 0x201612,
+        roughness: 0.28,
+        metalness: 0.55,
+      });
+    }
+  }
   const mesh = new THREE.Mesh(geom, materials);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-
-  // Paint each face's actual number onto the geometry. Skipped for D6
-  // (which has pips baked into its per-face materials).
-  const decals = paintFaceDecals(mesh, type, geom);
 
   // Throw kinematics — from the user's side of the tray (camera-facing,
   // +Z) inward (-Z), with random horizontal jitter and a good amount of
@@ -606,11 +614,14 @@ function createThrowDie(
       return getUpwardFaceValue(body.rotation(), type);
     },
     dispose() {
-      disposeFaceDecals(decals);
       world.removeRigidBody(body);
       geom.dispose();
       if (Array.isArray(materials)) {
-        disposeMaterials(materials);
+        if (type === 'd6') {
+          disposeMaterials(materials);
+        } else {
+          disposeFaceMaterials(materials);
+        }
       } else {
         materials.dispose();
       }
