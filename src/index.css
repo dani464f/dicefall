@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #101014;
+  --color-tray: #2a1d16;
+  --color-tray-deep: #1b120d;
+  --color-tray-warm: #3a2a1f;
+  --color-gold: #c9a45c;
+  --color-gold-soft: #b08f4d;
+  --color-ivory: #f4e8d0;
+  --color-secondary: #b8aa91;
+  --color-subtle: rgba(255, 255, 255, 0.08);
+  --color-danger: #a6413b;
+  --color-special: #6f8cff;
+
+  --font-display: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-ivory);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+  text-rendering: optimizeLegibility;
+}
+
+/* Prevent iOS Safari from zooming when focusing inputs */
+input,
+button,
+select,
+textarea {
+  font-size: 16px;
+}
+
+/* Remove default button styles on iOS */
+button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* --- Roll animation ---------------------------------------------------- */
+
+@keyframes diceFall {
+  0% {
+    transform: translate3d(var(--dx-start, 0px), -180px, 0)
+      rotate(var(--rot-start, 0deg)) scale(0.55);
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  55% {
+    /* first impact on the tray surface */
+    transform: translate3d(var(--dx-mid, 0px), 0px, 0)
+      rotate(var(--rot-mid, 540deg)) scale(1.08);
+  }
+  68% {
+    /* bounce up */
+    transform: translate3d(var(--dx-mid, 0px), -22px, 0)
+      rotate(var(--rot-mid, 540deg)) scale(1);
+  }
+  82% {
+    /* second smaller bounce */
+    transform: translate3d(0px, 0px, 0) rotate(var(--rot-end, 880deg)) scale(1.04);
+  }
+  92% {
+    transform: translate3d(0px, -6px, 0) rotate(var(--rot-end, 880deg)) scale(1);
+  }
+  100% {
+    transform: translate3d(0px, 0px, 0) rotate(0deg) scale(1);
+  }
+}
+
+@keyframes totalReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes formulaReveal {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
