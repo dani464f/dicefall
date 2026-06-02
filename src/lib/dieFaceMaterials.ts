@@ -112,6 +112,96 @@ function createTriangleFaceTexture(value: number): THREE.CanvasTexture {
 }
 
 /**
+ * For a face made of multiple triangles (pentagon = 5, kite = 2), assign
+ * UVs so all triangles converge at the canvas center (0.5, 0.5) at the
+ * face's geometric center and fan outward to a shared circle at the
+ * perimeter. This way the glyph painted at (0.5, 0.5) appears exactly
+ * once at the face center instead of repeating per sub-triangle.
+ */
+function assignRadialUVs(
+  uvs: Float32Array,
+  pos: THREE.BufferAttribute,
+  triangleIndices: number[],
+): void {
+  // Collect all vertex positions of this face's triangles.
+  const positions: THREE.Vector3[] = [];
+  for (const t of triangleIndices) {
+    for (let i = 0; i < 3; i++) {
+      positions.push(new THREE.Vector3().fromBufferAttribute(pos, t * 3 + i));
+    }
+  }
+
+  // Dedupe to unique vertex positions so the centroid isn't biased toward
+  // shared vertices (e.g. the pentagon center which appears in all 5 tris).
+  const seen = new Set<string>();
+  const unique: THREE.Vector3[] = [];
+  for (const p of positions) {
+    const key = `${p.x.toFixed(4)}|${p.y.toFixed(4)}|${p.z.toFixed(4)}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(p);
+    }
+  }
+
+  const centroid = new THREE.Vector3();
+  for (const p of unique) centroid.add(p);
+  centroid.divideScalar(unique.length);
+
+  // Face normal from the first triangle's winding.
+  const a = positions[0];
+  const b = positions[1];
+  const c = positions[2];
+  const normal = new THREE.Vector3()
+    .subVectors(b, a)
+    .cross(new THREE.Vector3().subVectors(c, a))
+    .normalize();
+
+  // Orthonormal basis in the face plane (any consistent choice works since
+  // the glyph at (0.5, 0.5) is rotationally invariant about its center).
+  let right = new THREE.Vector3(1, 0, 0);
+  if (Math.abs(normal.dot(right)) > 0.95) {
+    right = new THREE.Vector3(0, 1, 0);
+  }
+  right
+    .sub(normal.clone().multiplyScalar(right.dot(normal)))
+    .normalize();
+  const upDir = new THREE.Vector3().crossVectors(normal, right).normalize();
+
+  // Find the farthest perimeter vertex so we can scale UV radii to [0, R].
+  let maxDist = 0;
+  for (const p of unique) {
+    const d = p.distanceTo(centroid);
+    if (d > maxDist) maxDist = d;
+  }
+  if (maxDist < 1e-6) maxDist = 1;
+
+  const R = 0.46; // UV-space radius — small canvas margin for the glyph
+
+  for (let ti = 0; ti < triangleIndices.length; ti++) {
+    const t = triangleIndices[ti];
+    for (let i = 0; i < 3; i++) {
+      const p = positions[ti * 3 + i];
+      const v = p.clone().sub(centroid);
+      const x = v.dot(right);
+      const y = v.dot(upDir);
+      const dist = Math.sqrt(x * x + y * y);
+      const idx = (t * 3 + i) * 2;
+      if (dist < maxDist * 0.05) {
+        // Shared center vertex — all sub-triangles agree on (0.5, 0.5).
+        uvs[idx] = 0.5;
+        uvs[idx + 1] = 0.5;
+      } else {
+        const angle = Math.atan2(y, x);
+        const r = R * (dist / maxDist);
+        uvs[idx] = 0.5 + r * Math.cos(angle);
+        // Canvas V grows downward; invert so face-up maps to canvas-up.
+        uvs[idx + 1] = 0.5 - r * Math.sin(angle);
+      }
+    }
+  }
+}
+
+/**
  * For each triangle in `geom`, find the face entry whose outward normal it
  * matches best. Returns an array of length triangleCount, where each entry
  * is an index into `entries`.
@@ -184,19 +274,38 @@ export function buildFaceBakedDie(
   baseGeom.dispose();
 
   const triCount = geom.attributes.position.count / 3;
+  const pos = geom.attributes.position as THREE.BufferAttribute;
   const uvs = new Float32Array(geom.attributes.position.count * 2);
+
+  // Group triangles by face — multi-triangle faces (D12 pentagon = 5 tris,
+  // D10/D100 kite = 2 tris) need a shared radial UV layout so the glyph
+  // appears once at the face center, not once per sub-triangle.
+  const trianglesPerFace = new Map<number, number[]>();
   for (let t = 0; t < triCount; t++) {
-    const v0 = t * 3;
-    const v1 = t * 3 + 1;
-    const v2 = t * 3 + 2;
-    // Equilateral UV triangle whose centroid is at (0.5, 0.5).
-    uvs[v0 * 2] = UV_APEX[0];
-    uvs[v0 * 2 + 1] = UV_APEX[1];
-    uvs[v1 * 2] = UV_BL[0];
-    uvs[v1 * 2 + 1] = UV_BL[1];
-    uvs[v2 * 2] = UV_BR[0];
-    uvs[v2 * 2 + 1] = UV_BR[1];
+    const f = mapping[t];
+    const arr = trianglesPerFace.get(f);
+    if (arr) arr.push(t);
+    else trianglesPerFace.set(f, [t]);
   }
+
+  for (const [, tris] of trianglesPerFace) {
+    if (tris.length === 1) {
+      // Triangular face: keep the centered equilateral UV.
+      const t = tris[0];
+      const v0 = t * 3;
+      const v1 = t * 3 + 1;
+      const v2 = t * 3 + 2;
+      uvs[v0 * 2] = UV_APEX[0];
+      uvs[v0 * 2 + 1] = UV_APEX[1];
+      uvs[v1 * 2] = UV_BL[0];
+      uvs[v1 * 2 + 1] = UV_BL[1];
+      uvs[v2 * 2] = UV_BR[0];
+      uvs[v2 * 2 + 1] = UV_BR[1];
+    } else {
+      assignRadialUVs(uvs, pos, tris);
+    }
+  }
+
   geom.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
 
   geom.clearGroups();
