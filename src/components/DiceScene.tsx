@@ -165,9 +165,11 @@ const SETTLE_ANG_VEL = 0.08;
 const SETTLE_MAX_Y = 0.8;
 // If a die comes to rest on an edge / vertex with no clear upward face,
 // give it a small kick and let physics resettle it. Up to 2 attempts.
+// Nudges are intentionally tiny — just enough to topple, not enough to
+// start the die spinning all over again.
 const NUDGE_MAX = 2;
-const NUDGE_IMPULSE_Y = 1.2;
-const NUDGE_TORQUE_MAG = 0.6;
+const NUDGE_IMPULSE_Y = 0.7;
+const NUDGE_TORQUE_MAG = 0.25;
 
 function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
   // ---------- renderer / scene / camera / lights ----------
@@ -532,30 +534,32 @@ function createThrowDie(
   const startY = 2.4 + index * 0.55;
   const startZ = 1.3 + (Math.random() - 0.5) * 0.4;
 
-  // Slightly slower throw + less angular velocity = weightier, more "real"
-  // dice that thunk into the table instead of skittering.
-  const lvx = (Math.random() - 0.5) * 1.2;
+  // Throw kinematics tuned to settle within ~1.5s instead of spinning. The
+  // initial spin is just enough to tumble the die over a couple times in
+  // the air before it lands; the heavy angular damping + high friction
+  // then catch the rotation as soon as the edges/faces touch the floor.
+  const lvx = (Math.random() - 0.5) * 1.0;
   const lvy = 0.2 + Math.random() * 0.4;
-  const lvz = -3.0 - Math.random() * 1.2;
+  const lvz = -2.8 - Math.random() * 1.0;
 
   const bodyDesc = rapier.RigidBodyDesc.dynamic()
     .setTranslation(startX, startY, startZ)
     .setLinvel(lvx, lvy, lvz)
     .setAngvel({
-      x: (Math.random() - 0.5) * 22,
-      y: (Math.random() - 0.5) * 22,
-      z: (Math.random() - 0.5) * 22,
+      x: (Math.random() - 0.5) * 14,
+      y: (Math.random() - 0.5) * 14,
+      z: (Math.random() - 0.5) * 14,
     })
-    .setLinearDamping(0.35)
-    .setAngularDamping(0.55)
+    .setLinearDamping(0.55)
+    .setAngularDamping(1.4)
     .setCcdEnabled(true);
 
   const body = world.createRigidBody(bodyDesc);
 
   const colliderDesc = createColliderDesc(rapier, type)
-    .setRestitution(0.22)
-    .setFriction(0.7)
-    .setDensity(1.6);
+    .setRestitution(0.18)
+    .setFriction(0.95)
+    .setDensity(1.8);
   world.createCollider(colliderDesc, body);
 
   // sync first frame
@@ -629,13 +633,30 @@ function createThrowDie(
   };
 }
 
+/**
+ * Compute the vertex buffer of a transient THREE polyhedron so Rapier can
+ * build a convex hull collider matching the visible mesh. We do this fresh
+ * each call (rather than caching) because Rapier consumes the typed array
+ * and we want each die to own its descriptor.
+ */
+function polyhedronHullVerts(geom: THREE.BufferGeometry): Float32Array {
+  const pos = geom.attributes.position as THREE.BufferAttribute;
+  return new Float32Array(pos.array as ArrayLike<number>);
+}
+
 function createColliderDesc(
   rapier: Rapier,
   type: DiceType,
 ): InstanceType<Rapier['ColliderDesc']> {
   switch (type) {
-    case 'd4':
-      return rapier.ColliderDesc.ball(0.45);
+    case 'd4': {
+      // Tetrahedron convex hull — actual face contact instead of point-on-ball.
+      const g = new THREE.TetrahedronGeometry(0.58);
+      const verts = polyhedronHullVerts(g);
+      g.dispose();
+      const hull = rapier.ColliderDesc.convexHull(verts);
+      return hull ?? rapier.ColliderDesc.ball(0.45);
+    }
     case 'd6':
       return rapier.ColliderDesc.cuboid(0.375, 0.375, 0.375);
     case 'd10':
@@ -645,10 +666,27 @@ function createColliderDesc(
       const hull = rapier.ColliderDesc.convexHull(verts);
       return hull ?? rapier.ColliderDesc.ball(0.55);
     }
-    case 'd8':
-    case 'd12':
-    case 'd20':
-      return rapier.ColliderDesc.ball(0.55);
+    case 'd8': {
+      const g = new THREE.OctahedronGeometry(0.6);
+      const verts = polyhedronHullVerts(g);
+      g.dispose();
+      const hull = rapier.ColliderDesc.convexHull(verts);
+      return hull ?? rapier.ColliderDesc.ball(0.55);
+    }
+    case 'd12': {
+      const g = new THREE.DodecahedronGeometry(0.55);
+      const verts = polyhedronHullVerts(g);
+      g.dispose();
+      const hull = rapier.ColliderDesc.convexHull(verts);
+      return hull ?? rapier.ColliderDesc.ball(0.55);
+    }
+    case 'd20': {
+      const g = new THREE.IcosahedronGeometry(0.6);
+      const verts = polyhedronHullVerts(g);
+      g.dispose();
+      const hull = rapier.ColliderDesc.convexHull(verts);
+      return hull ?? rapier.ColliderDesc.ball(0.55);
+    }
   }
 }
 
