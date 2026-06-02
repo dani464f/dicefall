@@ -2,12 +2,15 @@
 
 A premium, mobile-first tabletop dice roller that uses real physics so the number you see is the face the die actually lands on.
 
+**🎲 Live demo: <https://dicefall-steel.vercel.app>** — best on a phone
+
 > Generic tabletop RPG dice. Not affiliated with Dungeons & Dragons or any other trademark holder.
 
 ## Status
 
-- D4, D6, D8, D12, D20 — **physics-driven**: the scene throws the die, watches it settle, reads the upward face.
-- D10, D100 — fair RNG fallback (custom pentagonal trapezohedron geometry still being built).
+- D4, D6, D8, D10, D12, D20, D100 — all **physics-driven**: the scene throws the die, watches it settle, reads the upward face.
+- Each face shows its actual numeral painted on, matching what face-detection will read.
+- Proficiency bonus pill (0–6), added on top of every roll.
 - Presets and roll history persist to `localStorage`.
 - Settings: reduced motion (auto / animated / reduced), sound + haptics placeholders.
 
