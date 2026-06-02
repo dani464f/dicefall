@@ -28,6 +28,26 @@ const DIE_INK = '#f1ce85';
 
 const FACE_TEXTURES = new Map<string, THREE.CanvasTexture>();
 
+/**
+ * Equilateral UV triangle centered in the canvas, so the triangle's centroid
+ * is at exactly (0.5, 0.5). That lets us paint the glyph at the canvas
+ * center and have it land on the face centroid after texture mapping.
+ *
+ * Equilateral with circumradius `R` around (0.5, 0.5):
+ *   apex (top):       (0.5, 0.5 - R)
+ *   bottom-left:      (0.5 - R*cos30°, 0.5 + R*sin30°)
+ *   bottom-right:     (0.5 + R*cos30°, 0.5 + R*sin30°)
+ *
+ * R = 0.46 keeps the triangle inside the [0,1] canvas with a small margin.
+ */
+const UV_R = 0.46;
+const UV_COS30 = Math.cos(Math.PI / 6);
+const UV_SIN30 = Math.sin(Math.PI / 6);
+
+const UV_APEX: [number, number] = [0.5, 0.5 - UV_R];
+const UV_BL: [number, number] = [0.5 - UV_R * UV_COS30, 0.5 + UV_R * UV_SIN30];
+const UV_BR: [number, number] = [0.5 + UV_R * UV_COS30, 0.5 + UV_R * UV_SIN30];
+
 function createTriangleFaceTexture(value: number): THREE.CanvasTexture {
   const cacheKey = `${value}`;
   const cached = FACE_TEXTURES.get(cacheKey);
@@ -44,35 +64,49 @@ function createTriangleFaceTexture(value: number): THREE.CanvasTexture {
   ctx.fillStyle = DIE_BG;
   ctx.fillRect(0, 0, size, size);
 
-  // Triangle UVs we'll use put:
-  //   v0 (apex)        at (0.5, 0.05)
-  //   v1 (bottom-left) at (0.05, 0.95)
-  //   v2 (bottom-right) at (0.95, 0.95)
-  // i.e. the texture's upper area is the apex region of the triangle.
-  // We center the glyph in the triangle's centroid, which in this UV layout
-  // is roughly (0.5, 0.65).
-  const cx = size * 0.5;
-  const cy = size * 0.62;
+  // Sized so the glyph fits inside the triangle's inscribed circle.
+  // For an equilateral triangle of circumradius R, the inscribed circle
+  // radius is R/2 = 0.23 in UV → ~ 59 px on a 256 canvas. Keep the glyph
+  // below ~50 px tall so it never leaks across an edge.
+  const px =
+    value >= 100 ? size * 0.18 : value >= 10 ? size * 0.22 : size * 0.26;
 
   ctx.fillStyle = DIE_INK;
-  const px =
-    value >= 100 ? size * 0.34 : value >= 10 ? size * 0.42 : size * 0.5;
   ctx.font = `800 ${Math.round(px)}px Georgia, "Times New Roman", serif`;
   ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(String(value), cx, cy);
+  ctx.textBaseline = 'alphabetic';
+
+  const cx = size / 2;
+  const cy = size / 2;
+
+  // Use the glyph's actual rendered bounding box so the visual center of
+  // the digit (not the EM box center) lands on the face centroid.
+  // Some browsers don't expose the actualBoundingBox* values; fall back to
+  // an approximate offset (~22 % of font px) that works for most serif
+  // digits when those metrics are missing.
+  const metrics = ctx.measureText(String(value));
+  const ascent =
+    (metrics as TextMetrics).actualBoundingBoxAscent ?? px * 0.7;
+  const descent =
+    (metrics as TextMetrics).actualBoundingBoxDescent ?? px * 0.1;
+  // Y at which fillText (alphabetic baseline) places the text so the box
+  // center is at cy.
+  const drawY = cy + (ascent - descent) / 2;
+
+  ctx.fillText(String(value), cx, drawY);
 
   // Underline ambiguous numerals (6 / 9 / 11) so orientation is clear.
   if (value === 6 || value === 9 || value === 11) {
-    const w = px * 0.55;
+    const w = px * 0.45;
     const h = px * 0.08;
-    ctx.fillRect(cx - w / 2, cy + px * 0.4, w, h);
+    // Position just under the glyph descender, still inside the triangle.
+    ctx.fillRect(cx - w / 2, drawY + descent + size * 0.012, w, h);
   }
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.needsUpdate = true;
-  tex.anisotropy = 4;
+  tex.anisotropy = 8;
   FACE_TEXTURES.set(cacheKey, tex);
   return tex;
 }
@@ -155,15 +189,13 @@ export function buildFaceBakedDie(
     const v0 = t * 3;
     const v1 = t * 3 + 1;
     const v2 = t * 3 + 2;
-    // v0 = apex (top center)
-    uvs[v0 * 2] = 0.5;
-    uvs[v0 * 2 + 1] = 0.05;
-    // v1 = bottom-left
-    uvs[v1 * 2] = 0.05;
-    uvs[v1 * 2 + 1] = 0.95;
-    // v2 = bottom-right
-    uvs[v2 * 2] = 0.95;
-    uvs[v2 * 2 + 1] = 0.95;
+    // Equilateral UV triangle whose centroid is at (0.5, 0.5).
+    uvs[v0 * 2] = UV_APEX[0];
+    uvs[v0 * 2 + 1] = UV_APEX[1];
+    uvs[v1 * 2] = UV_BL[0];
+    uvs[v1 * 2 + 1] = UV_BL[1];
+    uvs[v2 * 2] = UV_BR[0];
+    uvs[v2 * 2 + 1] = UV_BR[1];
   }
   geom.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
 
