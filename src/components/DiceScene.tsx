@@ -6,7 +6,7 @@ import {
   createD6Materials,
   disposeMaterials,
 } from '../lib/diceFaceTextures';
-import { createValueSprite } from '../lib/valueSprite';
+import { paintFaceDecals, disposeFaceDecals } from '../lib/diceFaceDecals';
 import {
   createPentagonalTrapezohedronGeometry,
   getPentagonalTrapezohedronVertices,
@@ -142,17 +142,11 @@ interface ThrowDie {
   dispose: () => void;
 }
 
-interface ValueLabel {
-  sprite: THREE.Sprite;
-  dispose: () => void;
-}
-
 interface ActiveThrow {
   request: ThrowRequest;
   dice: ThrowDie[];
   startTime: number;
   committed: boolean;
-  labels: ValueLabel[] | null;
 }
 
 interface LegacyDie {
@@ -245,12 +239,6 @@ function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
       scene.remove(d.mesh);
       d.dispose();
     }
-    if (activeThrow.labels) {
-      for (const l of activeThrow.labels) {
-        scene.remove(l.sprite);
-        l.dispose();
-      }
-    }
     activeThrow = null;
   };
 
@@ -288,7 +276,6 @@ function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
       dice,
       startTime: clock.elapsedTime,
       committed: false,
-      labels: null,
     };
   };
 
@@ -354,33 +341,11 @@ function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
             // user still gets a result rather than a freeze.
             return v ?? Math.floor(Math.random() * faces) + 1;
           });
-          // Add floating value labels above non-D6 dice so users can read
-          // the result without trying to spot which face is on top.
-          if (t.request.diceType !== 'd6') {
-            t.labels = values.map((v) => {
-              const label = createValueSprite(v);
-              scene.add(label.sprite);
-              return label;
-            });
-          }
           // Defer to a microtask so React state updates don't run inside
           // the rAF callback's render-side-effect window.
           Promise.resolve().then(() => {
             onResult(t.request.diceType, t.request.quantity, values);
           });
-        }
-      }
-      // Keep value labels pinned above their dice
-      if (activeThrow.labels) {
-        for (let i = 0; i < activeThrow.dice.length; i++) {
-          const die = activeThrow.dice[i];
-          const label = activeThrow.labels[i];
-          if (!label) continue;
-          label.sprite.position.set(
-            die.mesh.position.x,
-            die.mesh.position.y + 0.85,
-            die.mesh.position.z,
-          );
         }
       }
     }
@@ -480,6 +445,10 @@ function createThrowDie(
   mesh.castShadow = true;
   mesh.receiveShadow = true;
 
+  // Paint each face's actual number onto the geometry. Skipped for D6
+  // (which has pips baked into its per-face materials).
+  const decals = paintFaceDecals(mesh, type, geom);
+
   // Throw kinematics — from the user's side of the tray (camera-facing,
   // +Z) inward (-Z), with random horizontal jitter and a good amount of
   // tumble. Dice are vertically staggered so multi-throws don't overlap
@@ -570,6 +539,7 @@ function createThrowDie(
       return getUpwardFaceValue(body.rotation(), type);
     },
     dispose() {
+      disposeFaceDecals(decals);
       world.removeRigidBody(body);
       geom.dispose();
       if (Array.isArray(materials)) {

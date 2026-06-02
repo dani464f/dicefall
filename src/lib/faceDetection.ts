@@ -248,3 +248,16 @@ export function getUpwardFaceValue(
   if (bestDot < 0.5) return null;
   return best?.value ?? null;
 }
+
+/**
+ * Read-only view of the labeled face entries (normal + value) for a given die
+ * type. Used by the scene to paint each face with its actual detected value.
+ * Returns null for unrecognized types.
+ */
+export function getFaceEntries(
+  diceType: DiceType,
+): ReadonlyArray<{ readonly localNormal: THREE.Vector3; readonly value: number }> | null {
+  const table = getTables()[diceType];
+  if (!table) return null;
+  return table.faces;
+}
