@@ -1,12 +1,19 @@
 import { DiceScene } from './DiceScene';
 import type { ThrowRequest } from '../hooks/useDiceRoller';
 import type { DiceType, RollResult } from '../types/dice';
+import type { SceneTheme } from '../types/skins';
 
 interface DiceTrayProps {
   result: RollResult | null;
   isRolling: boolean;
   throwRequest: ThrowRequest | null;
   onResult: (diceType: DiceType, quantity: number, values: number[]) => void;
+  /**
+   * Active skin's scene theme. Plumbed through to DiceScene so a future
+   * change can swap table / tray / dice materials and lighting without
+   * touching this component's signature. Not yet honored inside the scene.
+   */
+  sceneTheme?: SceneTheme;
 }
 
 /**
@@ -19,6 +26,7 @@ export function DiceTray({
   isRolling,
   throwRequest,
   onResult,
+  sceneTheme,
 }: DiceTrayProps) {
   return (
     <div className="absolute inset-0">
@@ -27,6 +35,7 @@ export function DiceTray({
         isRolling={isRolling}
         throwRequest={throwRequest}
         onResult={onResult}
+        sceneTheme={sceneTheme}
       />
     </div>
   );

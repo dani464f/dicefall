@@ -13,6 +13,7 @@ import {
 } from '../lib/d10Geometry';
 import type { ThrowRequest } from '../hooks/useDiceRoller';
 import { DICE_FACES, type DiceType, type RollResult } from '../types/dice';
+import type { SceneTheme } from '../types/skins';
 
 // ===========================================================================
 // Public component
@@ -26,6 +27,12 @@ interface DiceSceneProps {
   throwRequest: ThrowRequest | null;
   /** Called once a physical throw has settled and faces have been read. */
   onResult: (diceType: DiceType, quantity: number, values: number[]) => void;
+  /**
+   * Active skin's scene theme. Currently unused inside the scene — material
+   * + lighting overrides are wired in a follow-up. The prop is part of the
+   * public API now so consumers can pass it without breaking on upgrade.
+   */
+  sceneTheme?: SceneTheme;
 }
 
 interface SceneAPI {
@@ -41,7 +48,11 @@ export function DiceScene({
   isRolling,
   throwRequest,
   onResult,
+  // sceneTheme is accepted for forward-compatibility with the skin system
+  // but not yet wired to runtime material / lighting overrides.
+  sceneTheme: _sceneTheme,
 }: DiceSceneProps) {
+  void _sceneTheme;
   const mountRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<SceneAPI | null>(null);
 

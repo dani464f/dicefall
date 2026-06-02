@@ -6,6 +6,10 @@ interface SettingsPanelProps {
   onClose: () => void;
   settings: Settings;
   onChange: (next: Settings) => void;
+  /** Optional: render a "Skins" row that opens the skin selector. */
+  onOpenSkins?: () => void;
+  /** Active skin name shown next to the Skins row. */
+  activeSkinName?: string;
 }
 
 export function SettingsPanel({
@@ -13,6 +17,8 @@ export function SettingsPanel({
   onClose,
   settings,
   onChange,
+  onOpenSkins,
+  activeSkinName,
 }: SettingsPanelProps) {
   const update = (patch: Partial<Settings>) =>
     onChange({ ...settings, ...patch });
@@ -20,6 +26,13 @@ export function SettingsPanel({
   return (
     <Sheet open={open} onClose={onClose} title="Settings">
       <div className="flex flex-col gap-3">
+        {onOpenSkins && (
+          <NavRow
+            label="Skins"
+            sublabel={activeSkinName ? `Active · ${activeSkinName}` : 'Pick a look'}
+            onClick={onOpenSkins}
+          />
+        )}
         <SegmentRow
           label="Reduced motion"
           sublabel="Skip the 3D dice throw and just show the result"
@@ -56,6 +69,42 @@ export function SettingsPanel({
         </p>
       </div>
     </Sheet>
+  );
+}
+
+interface NavRowProps {
+  label: string;
+  sublabel?: string;
+  onClick: () => void;
+}
+
+function NavRow({ label, sublabel, onClick }: NavRowProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full flex items-center justify-between gap-3 rounded-xl border border-subtle bg-white/[0.02] px-4 py-3 text-left hover:border-gold/30 transition-colors"
+    >
+      <div className="min-w-0 flex-1">
+        <p className="text-sm text-ivory font-medium">{label}</p>
+        {sublabel && (
+          <p className="text-xs text-secondary mt-0.5 truncate">{sublabel}</p>
+        )}
+      </div>
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="shrink-0 text-secondary/70"
+      >
+        <polyline points="9 18 15 12 9 6" />
+      </svg>
+    </button>
   );
 }
 

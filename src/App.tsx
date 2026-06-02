@@ -5,8 +5,10 @@ import { ResultPanel } from './components/ResultPanel';
 import { PresetsPanel } from './components/PresetsPanel';
 import { RollHistory } from './components/RollHistory';
 import { SettingsPanel } from './components/SettingsPanel';
+import { SkinSelector } from './components/SkinSelector';
 import { useDiceRoller } from './hooks/useDiceRoller';
 import { useLocalStorage } from './hooks/useLocalStorage';
+import { useSkinSystem } from './hooks/useSkinSystem';
 import { isPhysicsDie } from './lib/faceDetection';
 import {
   DEFAULT_SETTINGS,
@@ -29,7 +31,7 @@ const HISTORY_KEY = 'dicefall.history.v1';
 const SETTINGS_KEY = 'dicefall.settings.v1';
 const PROF_BONUS_KEY = 'dicefall.profBonus.v1';
 
-type SheetName = 'presets' | 'history' | 'settings' | null;
+type SheetName = 'presets' | 'history' | 'settings' | 'skins' | null;
 
 function makeId(): string {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -65,6 +67,10 @@ export default function App() {
     DEFAULT_SETTINGS,
   );
   const [openSheet, setOpenSheet] = useState<SheetName>(null);
+
+  // Skin system — owns active/unlocked/owned-premium state and mirrors the
+  // active skin's UiTheme into :root CSS variables on every change.
+  const skins = useSkinSystem();
 
   const recordRoll = useCallback(
     (result: RollResult) => {
@@ -134,6 +140,7 @@ export default function App() {
         isRolling={isRolling}
         throwRequest={throwRequest}
         onResult={handlePhysicsResult}
+        sceneTheme={skins.activeSkin.sceneTheme}
       />
 
       {/* Vignette over the scene for cinematic edges */}
@@ -225,6 +232,22 @@ export default function App() {
         onClose={() => setOpenSheet(null)}
         settings={settings}
         onChange={setSettings}
+        activeSkinName={skins.activeSkin.name}
+        onOpenSkins={() => setOpenSheet('skins')}
+      />
+
+      <SkinSelector
+        open={openSheet === 'skins'}
+        onClose={() => setOpenSheet('settings')}
+        skins={skins.allSkins}
+        activeSkinId={skins.activeSkinId}
+        isUnlocked={skins.isUnlocked}
+        onEquip={(id) => {
+          skins.equipSkin(id);
+        }}
+        onDevUnlock={(id) => {
+          skins.unlockSkin(id);
+        }}
       />
     </div>
   );
