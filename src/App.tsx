@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { DiceTray } from './components/DiceTray';
 import { DiceSelector } from './components/DiceSelector';
 import { ResultPanel } from './components/ResultPanel';
@@ -19,12 +19,15 @@ import {
 
 const DEFAULT_DIE: DiceType = 'd20';
 const DEFAULT_QUANTITY = 1;
-const DEFAULT_MODIFIER = 0;
+const DEFAULT_PROF_BONUS = 0;
+const PROF_BONUS_MIN = 0;
+const PROF_BONUS_MAX = 6;
 const HISTORY_MAX = 50;
 
 const PRESETS_KEY = 'dicefall.presets.v1';
 const HISTORY_KEY = 'dicefall.history.v1';
 const SETTINGS_KEY = 'dicefall.settings.v1';
+const PROF_BONUS_KEY = 'dicefall.profBonus.v1';
 
 type SheetName = 'presets' | 'history' | 'settings' | null;
 
@@ -42,7 +45,10 @@ function effectiveReducedMotion(s: Settings): boolean {
 export default function App() {
   const [diceType, setDiceType] = useState<DiceType>(DEFAULT_DIE);
   const [quantity, setQuantity] = useState(DEFAULT_QUANTITY);
-  const [modifier] = useState(DEFAULT_MODIFIER);
+  const [profBonus, setProfBonus] = useLocalStorage<number>(
+    PROF_BONUS_KEY,
+    DEFAULT_PROF_BONUS,
+  );
   const {
     lastRoll,
     isRolling,
@@ -73,14 +79,18 @@ export default function App() {
     if (usePhysics) {
       throwDice(diceType, quantity);
     } else {
-      const result = roll(diceType, quantity, isPhysicsDie(diceType) ? 0 : modifier);
+      const result = roll(diceType, quantity, profBonus);
       recordRoll(result);
     }
   };
 
+  // The scene reports the raw face values it read; we add the user's
+  // proficiency bonus on top here so it lands in the same RollResult.
+  const profBonusRef = useRef(profBonus);
+  profBonusRef.current = profBonus;
   const handlePhysicsResult = useCallback(
     (dt: DiceType, qty: number, values: number[]) => {
-      const result = commitPhysicsResult(dt, qty, values);
+      const result = commitPhysicsResult(dt, qty, values, profBonusRef.current);
       recordRoll(result);
     },
     [commitPhysicsResult, recordRoll],
@@ -94,17 +104,14 @@ export default function App() {
   const handleLoadPreset = (preset: Preset) => {
     setDiceType(preset.diceType);
     setQuantity(preset.quantity);
+    setProfBonus(preset.modifier);
     setOpenSheet(null);
     const usePhysics =
       isPhysicsDie(preset.diceType) && !effectiveReducedMotion(settings);
     if (usePhysics) {
       throwDice(preset.diceType, preset.quantity);
     } else {
-      const result = roll(
-        preset.diceType,
-        preset.quantity,
-        isPhysicsDie(preset.diceType) ? 0 : preset.modifier,
-      );
+      const result = roll(preset.diceType, preset.quantity, preset.modifier);
       recordRoll(result);
     }
   };
@@ -116,7 +123,7 @@ export default function App() {
   const currentSetup: RollSetup = {
     diceType,
     quantity,
-    modifier: 0,
+    modifier: profBonus,
   };
 
   return (
@@ -173,11 +180,19 @@ export default function App() {
         <div className="mx-auto w-full max-w-md flex flex-col gap-2.5">
           <ResultPanel result={lastRoll} isRolling={isRolling} />
           <DiceSelector selected={diceType} onSelect={setDiceType} />
-          <QuantityPill
-            diceType={diceType}
-            quantity={quantity}
-            onChange={setQuantity}
-          />
+          <div className="flex items-center justify-center gap-2">
+            <QuantityPill
+              diceType={diceType}
+              quantity={quantity}
+              onChange={setQuantity}
+            />
+            <ProfBonusPill
+              value={profBonus}
+              min={PROF_BONUS_MIN}
+              max={PROF_BONUS_MAX}
+              onChange={setProfBonus}
+            />
+          </div>
           <RollButton onClick={handleRoll} disabled={isRolling} rolling={isRolling} />
           <BottomNav
             hasResult={!!lastRoll}
@@ -253,6 +268,58 @@ function QuantityPill({ diceType, quantity, onChange }: QuantityPillProps) {
         onClick={inc}
         aria-label="Increase quantity"
         className="w-6 h-6 rounded-full text-gold/80 hover:text-gold text-base leading-none flex items-center justify-center"
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
+interface ProfBonusPillProps {
+  value: number;
+  min: number;
+  max: number;
+  onChange: (n: number) => void;
+}
+
+function ProfBonusPill({ value, min, max, onChange }: ProfBonusPillProps) {
+  const dec = () => onChange(Math.max(min, value - 1));
+  const inc = () => onChange(Math.min(max, value + 1));
+  const display = value >= 0 ? `+${value}` : `${value}`;
+  const active = value > 0;
+  return (
+    <div
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-colors"
+      style={{
+        background:
+          'linear-gradient(180deg, rgba(20,12,8,0.78) 0%, rgba(10,6,3,0.88) 100%)',
+        border: active
+          ? '1px solid rgba(201, 164, 92, 0.85)'
+          : '1px solid rgba(201, 164, 92, 0.35)',
+        boxShadow: active ? '0 0 12px rgba(201,164,92,0.2)' : undefined,
+      }}
+    >
+      <button
+        type="button"
+        onClick={dec}
+        aria-label="Decrease proficiency bonus"
+        disabled={value <= min}
+        className="w-6 h-6 rounded-full text-gold/80 hover:text-gold text-base leading-none flex items-center justify-center disabled:opacity-30"
+      >
+        −
+      </button>
+      <span
+        className="text-xs uppercase tracking-[0.2em] text-gold/85 tabular-nums"
+        title="Proficiency bonus added to every roll"
+      >
+        Prof {display}
+      </span>
+      <button
+        type="button"
+        onClick={inc}
+        aria-label="Increase proficiency bonus"
+        disabled={value >= max}
+        className="w-6 h-6 rounded-full text-gold/80 hover:text-gold text-base leading-none flex items-center justify-center disabled:opacity-30"
       >
         +
       </button>

@@ -74,20 +74,23 @@ export function useDiceRoller() {
   );
 
   // Scene calls this once all dice have settled and faces have been detected.
+  // The modifier (e.g. proficiency bonus) is added on top of the physical
+  // sum here so the displayed total reflects everything together.
   const commitPhysicsResult = useCallback(
     (
       diceType: DiceType,
       quantity: number,
       individualResults: number[],
+      modifier: number,
     ): RollResult => {
-      const total = individualResults.reduce((a, b) => a + b, 0);
+      const subtotal = individualResults.reduce((a, b) => a + b, 0);
       const result: RollResult = {
         id: makeId(),
         diceType,
         quantity,
-        modifier: 0, // physics path doesn't apply a modifier — UI is locked at 0
+        modifier,
         individualResults,
-        total,
+        total: subtotal + modifier,
         timestamp: Date.now(),
       };
       setLastRoll(result);
