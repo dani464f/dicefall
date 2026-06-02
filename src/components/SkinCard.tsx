@@ -6,7 +6,7 @@ interface SkinCardProps {
   isUnlocked: boolean;
   onEquip: () => void;
   /** Dev-only affordance for unlockable skins; not shown for premium skins. */
-  onDevUnlock?: () => void;
+  onDevUnlock?: (() => void) | undefined;
 }
 
 /**
@@ -87,7 +87,7 @@ interface ActionButtonProps {
   isEquipped: boolean;
   isUnlocked: boolean;
   onEquip: () => void;
-  onDevUnlock?: () => void;
+  onDevUnlock?: (() => void) | undefined;
 }
 
 function ActionButton({
@@ -126,13 +126,14 @@ function ActionButton({
   }
 
   // Unlockable + locked. Show locked state, and a dev-test unlock button
-  // when one is provided (clearly marked temporary).
+  // *only* in development builds (Vite strips the JSX out of the prod
+  // bundle when the condition is statically false).
   return (
     <div className="flex flex-col items-end gap-1">
       <span className="px-2.5 py-1.5 text-[10px] uppercase tracking-[0.18em] text-secondary/80 border border-subtle rounded-md">
         Locked
       </span>
-      {onDevUnlock && (
+      {import.meta.env.DEV && onDevUnlock && (
         <button
           type="button"
           onClick={onDevUnlock}

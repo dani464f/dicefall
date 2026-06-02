@@ -15,6 +15,13 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Strictness — locks in type safety the codebase already has by author
+     * discipline. Without these flags, any new contribution can silently
+     * regress to implicit-any / null deref / index-undefined bugs.        */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,

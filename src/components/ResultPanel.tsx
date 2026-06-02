@@ -26,9 +26,12 @@ export function ResultPanel({ result, isRolling }: ResultPanelProps) {
     <div
       className="relative w-full px-5 py-3 select-none"
       style={{
+        // Skin-aware: derives the surface tones from --color-tray-deep and
+        // the border from --color-gold so equipping a new skin shifts the
+        // panel automatically instead of leaving a hard-coded brown frame.
         background:
-          'linear-gradient(180deg, rgba(20,12,8,0.78) 0%, rgba(10,6,3,0.85) 100%)',
-        border: '1px solid rgba(201, 164, 92, 0.55)',
+          'linear-gradient(180deg, color-mix(in srgb, var(--color-tray-deep) 78%, transparent) 0%, color-mix(in srgb, var(--color-tray-deep) 88%, #000 12%) 100%)',
+        border: '1px solid color-mix(in srgb, var(--color-gold) 55%, transparent)',
         borderRadius: '10px',
         boxShadow:
           '0 8px 24px rgba(0,0,0,0.6), inset 0 0 12px rgba(0,0,0,0.45)',
@@ -51,7 +54,10 @@ export function ResultPanel({ result, isRolling }: ResultPanelProps) {
           </p>
           <p
             className="font-display text-4xl text-gold tabular-nums leading-none"
-            style={{ textShadow: '0 0 14px rgba(201,164,92,0.45)' }}
+            style={{
+              textShadow:
+                '0 0 14px color-mix(in srgb, var(--color-gold) 45%, transparent)',
+            }}
           >
             {total}
           </p>

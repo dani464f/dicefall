@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Sheet } from './Sheet';
+import { formatDiceFormula } from '../lib/dice';
 import type { Preset, RollSetup } from '../types/dice';
 
 interface PresetsPanelProps {
@@ -52,7 +53,7 @@ export function PresetsPanel({
         </label>
         <div className="flex items-center justify-between gap-3">
           <span className="font-display text-sm text-secondary tabular-nums">
-            {formatFormula(current)}
+            {formatDiceFormula(current)}
           </span>
           <button
             type="submit"
@@ -82,7 +83,7 @@ export function PresetsPanel({
                     {p.name}
                   </span>
                   <span className="font-display text-sm text-secondary tabular-nums shrink-0">
-                    {formatFormula(p)}
+                    {formatDiceFormula(p)}
                   </span>
                 </button>
                 <button
@@ -112,13 +113,3 @@ export function PresetsPanel({
   );
 }
 
-function formatFormula(setup: {
-  diceType: string;
-  quantity: number;
-  modifier: number;
-}): string {
-  const base = `${setup.quantity}${setup.diceType}`;
-  if (setup.modifier === 0) return base;
-  if (setup.modifier > 0) return `${base} + ${setup.modifier}`;
-  return `${base} − ${Math.abs(setup.modifier)}`;
-}

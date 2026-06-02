@@ -36,3 +36,20 @@ function makeId(): string {
     Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
   );
 }
+
+/**
+ * Canonical dice formula formatter — `2d20 + 3`, `1d6 − 1`, `4d8`.
+ * Used by ResultPanel, RollHistory, PresetsPanel so the wording stays in
+ * one place. Uses U+2212 minus (not ASCII `-`) to match the tabular-nums
+ * minus sign used in the rest of the UI.
+ */
+export function formatDiceFormula(setup: {
+  diceType: string;
+  quantity: number;
+  modifier: number;
+}): string {
+  const base = `${setup.quantity}${setup.diceType}`;
+  if (setup.modifier === 0) return base;
+  if (setup.modifier > 0) return `${base} + ${setup.modifier}`;
+  return `${base} − ${Math.abs(setup.modifier)}`;
+}

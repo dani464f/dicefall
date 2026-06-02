@@ -11,9 +11,13 @@ import {
   createPentagonalTrapezohedronGeometry,
   getPentagonalTrapezohedronVertices,
 } from '../lib/d10Geometry';
+import {
+  resolveSceneTheme,
+  type ResolvedSceneTheme,
+} from '../lib/skins/sceneResolver';
 import type { ThrowRequest } from '../hooks/useDiceRoller';
-import { DICE_FACES, type DiceType, type RollResult } from '../types/dice';
 import type { SceneTheme } from '../types/skins';
+import { DICE_FACES, type DiceType, type RollResult } from '../types/dice';
 
 // ===========================================================================
 // Public component
@@ -25,14 +29,21 @@ interface DiceSceneProps {
   isRolling: boolean;
   /** Physics-driven path. When token changes, dice are thrown and detected. */
   throwRequest: ThrowRequest | null;
-  /** Called once a physical throw has settled and faces have been read. */
-  onResult: (diceType: DiceType, quantity: number, values: number[]) => void;
+  /** Called once a physical throw has settled and faces have been read.
+   *  `token` is the throw's id at request time — the consumer should drop
+   *  the result if it no longer matches the latest pending throw. */
+  onResult: (
+    diceType: DiceType,
+    quantity: number,
+    values: number[],
+    token: number,
+  ) => void;
   /**
    * Active skin's scene theme. Currently unused inside the scene — material
    * + lighting overrides are wired in a follow-up. The prop is part of the
    * public API now so consumers can pass it without breaking on upgrade.
    */
-  sceneTheme?: SceneTheme;
+  sceneTheme?: SceneTheme | undefined;
 }
 
 interface SceneAPI {
@@ -40,6 +51,8 @@ interface SceneAPI {
   setIsRolling: (rolling: boolean) => void;
   setThrowRequest: (request: ThrowRequest | null) => void;
   setOnResult: (cb: DiceSceneProps['onResult']) => void;
+  /** Update lights + table/tray/dice materials when the active skin changes. */
+  setSceneTheme: (theme: SceneTheme | undefined) => void;
   cleanup: () => void;
 }
 
@@ -48,11 +61,8 @@ export function DiceScene({
   isRolling,
   throwRequest,
   onResult,
-  // sceneTheme is accepted for forward-compatibility with the skin system
-  // but not yet wired to runtime material / lighting overrides.
-  sceneTheme: _sceneTheme,
+  sceneTheme,
 }: DiceSceneProps) {
-  void _sceneTheme;
   const mountRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<SceneAPI | null>(null);
 
@@ -61,6 +71,7 @@ export function DiceScene({
   const latestIsRollingRef = useRef<boolean>(isRolling);
   const latestThrowRef = useRef<ThrowRequest | null>(throwRequest);
   const latestOnResultRef = useRef(onResult);
+  const latestSceneThemeRef = useRef<SceneTheme | undefined>(sceneTheme);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -80,17 +91,27 @@ export function DiceScene({
 
       let api: SceneAPI;
       try {
-        api = buildScene(mount, rapier);
+        api = buildScene(mount, rapier, latestSceneThemeRef.current);
       } catch (err) {
         console.error('[Dicefall] buildScene failed, retrying without physics', err);
-        api = buildScene(mount, null);
+        api = buildScene(mount, null, latestSceneThemeRef.current);
       }
+      // Re-check cancellation: the component may have unmounted during the
+      // synchronous buildScene work (rare, but possible under HMR / Strict
+      // Mode). If so, tear down the freshly-built scene immediately rather
+      // than leaving a renderer + RAF + Rapier world dangling.
+      if (cancelled) {
+        api.cleanup();
+        return;
+      }
+      // Wire teardown FIRST so even if a downstream setter throws, the
+      // cleanup function still runs on unmount.
+      teardown = api.cleanup;
       apiRef.current = api;
       api.setOnResult(latestOnResultRef.current);
       api.setResult(latestResultRef.current);
       api.setIsRolling(latestIsRollingRef.current);
       api.setThrowRequest(latestThrowRef.current);
-      teardown = api.cleanup;
     };
     init();
 
@@ -100,6 +121,11 @@ export function DiceScene({
       teardown?.();
     };
   }, []);
+
+  useEffect(() => {
+    latestSceneThemeRef.current = sceneTheme;
+    apiRef.current?.setSceneTheme(sceneTheme);
+  }, [sceneTheme]);
 
   useEffect(() => {
     latestOnResultRef.current = onResult;
@@ -171,9 +197,8 @@ const THROW_TIMEOUT_S = 7;
 const SETTLE_FRAMES = 30; // ~0.5s at 60fps
 const SETTLE_LIN_VEL = 0.05;
 const SETTLE_ANG_VEL = 0.08;
-// A die must be this close to the table to count as settled — prevents
-// a die paused at the peak of a bounce from passing the velocity check.
-const SETTLE_MAX_Y = 0.8;
+// (per-die settle ceiling is computed from `DIE_RADIUS * 1.5` further down
+//  the file, replacing the previous hand-tuned `SETTLE_MAX_Y = 0.8`.)
 // If a die comes to rest on an edge / vertex with no clear upward face,
 // give it a small kick and let physics resettle it. Up to 2 attempts.
 // Nudges are intentionally tiny — just enough to topple, not enough to
@@ -182,7 +207,11 @@ const NUDGE_MAX = 2;
 const NUDGE_IMPULSE_Y = 0.7;
 const NUDGE_TORQUE_MAG = 0.25;
 
-function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
+function buildScene(
+  mount: HTMLDivElement,
+  rapier: Rapier | null,
+  initialTheme: SceneTheme | undefined,
+): SceneAPI {
   // ---------- renderer / scene / camera / lights ----------
   const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
   renderer.shadowMap.enabled = true;
@@ -196,37 +225,64 @@ function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
   camera.position.set(0, 5.5, 6.5);
   camera.lookAt(0, 0, 0);
 
-  // --- Tavern lighting (cranked so the polished dice + gold engravings
-  //     actually catch the room without going neon).
-  scene.add(new THREE.AmbientLight(0xb88a5a, 0.65));
-  scene.add(new THREE.HemisphereLight(0xbb8a5a, 0x1c0e08, 0.95));
+  // --- Skin-driven materials + lighting ---------------------------------
+  // The resolver turns the SceneTheme's string IDs into concrete configs.
+  // Materials and lights are constructed once here, then their `color` /
+  // `intensity` / `position` are mutated in setSceneTheme when the skin
+  // changes — no scene rebuild required.
+  let resolved: ResolvedSceneTheme = resolveSceneTheme(initialTheme);
 
-  // Candle key light — bright amber pool from upper-left.
-  const candle = new THREE.PointLight(0xffc890, 180, 24, 1.2);
-  candle.position.set(-3.2, 4.6, 3.4);
+  const ambient = new THREE.AmbientLight(
+    resolved.lighting.ambient.color,
+    resolved.lighting.ambient.intensity,
+  );
+  scene.add(ambient);
+
+  const hemi = new THREE.HemisphereLight(
+    resolved.lighting.hemisphere.sky,
+    resolved.lighting.hemisphere.ground,
+    resolved.lighting.hemisphere.intensity,
+  );
+  scene.add(hemi);
+
+  // Candle key light — warm pool from upper-left.
+  const candle = new THREE.PointLight(
+    resolved.lighting.key.color,
+    resolved.lighting.key.intensity,
+    24,
+    1.2,
+  );
+  candle.position.copy(resolved.lighting.key.position);
   candle.castShadow = true;
   candle.shadow.mapSize.set(1024, 1024);
   candle.shadow.bias = -0.0008;
   candle.shadow.radius = 4;
   scene.add(candle);
 
-  // Back-rim — picks out dice silhouettes from the dark wood.
-  const rim = new THREE.PointLight(0xe2bc7a, 40, 18, 1.3);
-  rim.position.set(2.8, 3.5, -3);
+  // Back-rim — picks out dice silhouettes from the dark surroundings.
+  const rim = new THREE.PointLight(
+    resolved.lighting.rim.color,
+    resolved.lighting.rim.intensity,
+    18,
+    1.3,
+  );
+  rim.position.copy(resolved.lighting.rim.position);
   scene.add(rim);
 
-  // Direct top fill so the leather and gold decals always have a wash to
-  // play off, instead of dropping into black on the candle's shadow side.
-  const top = new THREE.DirectionalLight(0xffe2b0, 1.4);
-  top.position.set(0.5, 8, 1);
+  // Direct top fill so the leather + glyphs always have a wash to play off.
+  const top = new THREE.DirectionalLight(
+    resolved.lighting.top.color,
+    resolved.lighting.top.intensity,
+  );
+  top.position.copy(resolved.lighting.top.position);
   scene.add(top);
 
-  // --- Tavern tabletop (dark walnut, extends past the camera frustum) ---
+  // --- Tabletop (extends past the camera frustum) ---
   const tableGeom = new THREE.PlaneGeometry(22, 20);
   const tableMat = new THREE.MeshStandardMaterial({
-    color: 0x18100a,
-    roughness: 0.92,
-    metalness: 0.05,
+    color: resolved.table.color,
+    roughness: resolved.table.roughness,
+    metalness: resolved.table.metalness,
   });
   const table = new THREE.Mesh(tableGeom, tableMat);
   table.rotation.x = -Math.PI / 2;
@@ -237,9 +293,9 @@ function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
   // --- Dice tray: leather floor inside, wooden rails around ---
   const trayFloorGeom = new THREE.PlaneGeometry(4.2, 4.2);
   const trayFloorMat = new THREE.MeshStandardMaterial({
-    color: 0x1c0d06,
-    roughness: 0.88,
-    metalness: 0.02,
+    color: resolved.trayFloor.color,
+    roughness: resolved.trayFloor.roughness,
+    metalness: resolved.trayFloor.metalness,
   });
   const trayFloor = new THREE.Mesh(trayFloorGeom, trayFloorMat);
   trayFloor.rotation.x = -Math.PI / 2;
@@ -247,11 +303,10 @@ function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
   trayFloor.receiveShadow = true;
   scene.add(trayFloor);
 
-  // Wooden rail walls — walnut with a slight sheen on top edges.
   const railMat = new THREE.MeshStandardMaterial({
-    color: 0x3b2114,
-    roughness: 0.7,
-    metalness: 0.08,
+    color: resolved.trayRail.color,
+    roughness: resolved.trayRail.roughness,
+    metalness: resolved.trayRail.metalness,
   });
   const railH = 0.35;
   const railT = 0.22;
@@ -326,27 +381,42 @@ function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
     onResult = cb;
   };
 
+  // Most-recent throw token the scene has processed. Guards against the
+  // same throwRequest being replayed into the scene (StrictMode mount, HMR
+  // resume, init effect re-applying latestThrowRef.current after build).
+  let lastAppliedThrowToken: number | null = null;
+
   // -------- physics-driven throw path --------
   const setThrowRequest: SceneAPI['setThrowRequest'] = (req) => {
     if (!req) {
+      lastAppliedThrowToken = null;
       removeActiveThrow();
       return;
     }
+    if (req.token === lastAppliedThrowToken) return;
     if (!physics) return; // no physics available; App will use legacy path
+    lastAppliedThrowToken = req.token;
 
     removeActiveThrow();
     removeLegacy();
 
     const dice: ThrowDie[] = [];
     for (let i = 0; i < req.quantity; i++) {
-      const d = createThrowDie(req.diceType, i, physics);
+      const d = createThrowDie(
+        req.diceType,
+        i,
+        physics,
+        resolved.dice.color,
+        resolved.dice.roughness,
+        resolved.dice.metalness,
+      );
       scene.add(d.mesh);
       dice.push(d);
     }
     activeThrow = {
       request: req,
       dice,
-      startTime: clock.elapsedTime,
+      startTime: sceneTime,
       committed: false,
     };
   };
@@ -365,8 +435,8 @@ function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
     const positions = computeGridPositions(result.individualResults.length);
     for (let i = 0; i < result.individualResults.length; i++) {
       const die = physics
-        ? createLegacyPhysicsDie(result.diceType, positions[i], i, physics)
-        : createTweenDie(result.diceType, positions[i], i);
+        ? createLegacyPhysicsDie(result.diceType, positions[i]!, i, physics)
+        : createTweenDie(result.diceType, positions[i]!, i);
       scene.add(die.mesh);
       legacyDice.push(die);
     }
@@ -377,16 +447,37 @@ function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
   };
 
   // ---------- render loop ----------
+  // Fixed-timestep accumulator. Physics steps at exactly 1/60 s regardless
+  // of display refresh rate. Without this, settle detection fired ~2.4×
+  // faster on a 144 Hz monitor (and arbitrarily on backgrounded tabs).
+  // We cap subSteps per frame so a paused tab doesn't avalanche-step on
+  // return.
+  const FIXED_DT = 1 / 60;
+  const MAX_SUBSTEPS = 5;
   let raf = 0;
+  let accumulator = 0;
+  let sceneTime = 0;
   const clock = new THREE.Clock();
   const animate = () => {
-    const delta = Math.min(clock.getDelta(), 0.05);
-    if (physics) physics.world.step();
+    const delta = Math.min(clock.getDelta(), 0.1);
+    accumulator += delta;
+    let subSteps = 0;
+    while (accumulator >= FIXED_DT && subSteps < MAX_SUBSTEPS) {
+      if (physics) physics.world.step();
+      if (activeThrow) {
+        for (const d of activeThrow.dice) d.tick();
+      }
+      sceneTime += FIXED_DT;
+      accumulator -= FIXED_DT;
+      subSteps++;
+    }
+    // Legacy decorative dice tween off render-frame delta, which is fine
+    // for them — they don't depend on physics ticks.
+    for (const d of legacyDice) d.tick(delta);
 
     if (activeThrow) {
-      for (const d of activeThrow.dice) d.tick();
       if (!activeThrow.committed) {
-        const elapsed = clock.elapsedTime - activeThrow.startTime;
+        const elapsed = sceneTime - activeThrow.startTime;
         // For each die, decide: rolling / settled / leaning / stuck.
         // - rolling: not ready
         // - settled: ready (clear face)
@@ -414,15 +505,20 @@ function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
             return v ?? Math.floor(Math.random() * faces) + 1;
           });
           // Defer to a microtask so React state updates don't run inside
-          // the rAF callback's render-side-effect window.
+          // the rAF callback's render-side-effect window. The token is
+          // captured here so a stale commit (after Clear or re-roll) can
+          // be rejected by the consumer.
           Promise.resolve().then(() => {
-            onResult(t.request.diceType, t.request.quantity, values);
+            onResult(
+              t.request.diceType,
+              t.request.quantity,
+              values,
+              t.request.token,
+            );
           });
         }
       }
     }
-
-    for (const d of legacyDice) d.tick(delta);
 
     renderer.render(scene, camera);
     raf = requestAnimationFrame(animate);
@@ -448,11 +544,43 @@ function buildScene(mount: HTMLDivElement, rapier: Rapier | null): SceneAPI {
     }
   };
 
+  // Mutate lights + materials in place when the active skin changes. Live
+  // dice keep their previous colour (they'll get replaced on the next roll
+  // anyway), but the table, tray, rails, and lighting re-tint instantly.
+  const setSceneTheme: SceneAPI['setSceneTheme'] = (theme) => {
+    const next = resolveSceneTheme(theme);
+    resolved = next;
+    ambient.color.setHex(next.lighting.ambient.color);
+    ambient.intensity = next.lighting.ambient.intensity;
+    hemi.color.setHex(next.lighting.hemisphere.sky);
+    hemi.groundColor.setHex(next.lighting.hemisphere.ground);
+    hemi.intensity = next.lighting.hemisphere.intensity;
+    candle.color.setHex(next.lighting.key.color);
+    candle.intensity = next.lighting.key.intensity;
+    candle.position.copy(next.lighting.key.position);
+    rim.color.setHex(next.lighting.rim.color);
+    rim.intensity = next.lighting.rim.intensity;
+    rim.position.copy(next.lighting.rim.position);
+    top.color.setHex(next.lighting.top.color);
+    top.intensity = next.lighting.top.intensity;
+    top.position.copy(next.lighting.top.position);
+    tableMat.color.setHex(next.table.color);
+    tableMat.roughness = next.table.roughness;
+    tableMat.metalness = next.table.metalness;
+    trayFloorMat.color.setHex(next.trayFloor.color);
+    trayFloorMat.roughness = next.trayFloor.roughness;
+    trayFloorMat.metalness = next.trayFloor.metalness;
+    railMat.color.setHex(next.trayRail.color);
+    railMat.roughness = next.trayRail.roughness;
+    railMat.metalness = next.trayRail.metalness;
+  };
+
   return {
     setResult,
     setIsRolling,
     setThrowRequest,
     setOnResult,
+    setSceneTheme,
     cleanup,
   };
 }
@@ -507,6 +635,9 @@ function createThrowDie(
   type: DiceType,
   index: number,
   physics: PhysicsBundle,
+  diceColor: number,
+  diceRoughness: number,
+  diceMetalness: number,
 ): ThrowDie {
   const { rapier, world } = physics;
   const rawGeom = createGeometry(type);
@@ -527,9 +658,9 @@ function createThrowDie(
     } else {
       geom = rawGeom;
       materials = new THREE.MeshStandardMaterial({
-        color: 0x201612,
-        roughness: 0.28,
-        metalness: 0.55,
+        color: diceColor,
+        roughness: diceRoughness,
+        metalness: diceMetalness,
       });
     }
   }
@@ -562,8 +693,11 @@ function createThrowDie(
       z: (Math.random() - 0.5) * 14,
     })
     .setLinearDamping(0.55)
-    .setAngularDamping(1.4)
-    .setCcdEnabled(true);
+    .setAngularDamping(1.4);
+  // CCD intentionally off — at the throw speeds we use, the default
+  // discrete collision step is plenty and CCD costs roughly 2× the
+  // physics-step time per die. Re-enable per-die only if a dice gets
+  // tunneling reports at higher speeds.
 
   const body = world.createRigidBody(bodyDesc);
 
@@ -597,7 +731,11 @@ function createThrowDie(
       const av = body.angvel();
       const lmag = Math.hypot(lv.x, lv.y, lv.z);
       const amag = Math.hypot(av.x, av.y, av.z);
-      const yOk = t.y < SETTLE_MAX_Y;
+      // Per-die settle ceiling derived from bounding radius — D4/D20
+      // resting on a face / leaning on a wall sit higher than D6 ever
+      // does, so a single hand-tuned constant misclassified them as
+      // "still bouncing". `radius × 1.5` covers leaning + a small margin.
+      const yOk = t.y < DIE_RADIUS[type] * 1.5;
       if (yOk && lmag < SETTLE_LIN_VEL && amag < SETTLE_ANG_VEL) {
         settledFrames++;
       } else {
@@ -645,61 +783,75 @@ function createThrowDie(
 }
 
 /**
- * Compute the vertex buffer of a transient THREE polyhedron so Rapier can
- * build a convex hull collider matching the visible mesh. We do this fresh
- * each call (rather than caching) because Rapier consumes the typed array
- * and we want each die to own its descriptor.
+ * Lazily-built, module-scoped Float32Array per die type for the convex-hull
+ * collider. The earlier implementation built fresh THREE geometries on
+ * every die — 20 D20s = 20 IcosahedronGeometry allocs + 20 disposes per
+ * roll. Rapier clones the buffer into WASM memory when it builds the hull,
+ * so caching the source array is safe.
  */
-function polyhedronHullVerts(geom: THREE.BufferGeometry): Float32Array {
+const HULL_VERT_CACHE = new Map<DiceType, Float32Array>();
+
+function getHullVerts(type: DiceType): Float32Array | null {
+  const cached = HULL_VERT_CACHE.get(type);
+  if (cached) return cached;
+  let geom: THREE.BufferGeometry | null = null;
+  switch (type) {
+    case 'd4':
+      geom = new THREE.TetrahedronGeometry(0.58);
+      break;
+    case 'd8':
+      geom = new THREE.OctahedronGeometry(0.6);
+      break;
+    case 'd12':
+      geom = new THREE.DodecahedronGeometry(0.55);
+      break;
+    case 'd20':
+      geom = new THREE.IcosahedronGeometry(0.6);
+      break;
+    default:
+      return null;
+  }
   const pos = geom.attributes.position as THREE.BufferAttribute;
-  return new Float32Array(pos.array as ArrayLike<number>);
+  const verts = new Float32Array(pos.array as ArrayLike<number>);
+  geom.dispose();
+  HULL_VERT_CACHE.set(type, verts);
+  return verts;
 }
 
 function createColliderDesc(
   rapier: Rapier,
   type: DiceType,
 ): InstanceType<Rapier['ColliderDesc']> {
-  switch (type) {
-    case 'd4': {
-      // Tetrahedron convex hull — actual face contact instead of point-on-ball.
-      const g = new THREE.TetrahedronGeometry(0.58);
-      const verts = polyhedronHullVerts(g);
-      g.dispose();
-      const hull = rapier.ColliderDesc.convexHull(verts);
-      return hull ?? rapier.ColliderDesc.ball(0.45);
-    }
-    case 'd6':
-      return rapier.ColliderDesc.cuboid(0.375, 0.375, 0.375);
-    case 'd10':
-    case 'd100': {
-      // Real pentagonal-trapezohedron hull so dice can actually rest on a face.
-      const verts = getPentagonalTrapezohedronVertices(0.6);
-      const hull = rapier.ColliderDesc.convexHull(verts);
-      return hull ?? rapier.ColliderDesc.ball(0.55);
-    }
-    case 'd8': {
-      const g = new THREE.OctahedronGeometry(0.6);
-      const verts = polyhedronHullVerts(g);
-      g.dispose();
-      const hull = rapier.ColliderDesc.convexHull(verts);
-      return hull ?? rapier.ColliderDesc.ball(0.55);
-    }
-    case 'd12': {
-      const g = new THREE.DodecahedronGeometry(0.55);
-      const verts = polyhedronHullVerts(g);
-      g.dispose();
-      const hull = rapier.ColliderDesc.convexHull(verts);
-      return hull ?? rapier.ColliderDesc.ball(0.55);
-    }
-    case 'd20': {
-      const g = new THREE.IcosahedronGeometry(0.6);
-      const verts = polyhedronHullVerts(g);
-      g.dispose();
-      const hull = rapier.ColliderDesc.convexHull(verts);
-      return hull ?? rapier.ColliderDesc.ball(0.55);
-    }
+  if (type === 'd6') {
+    return rapier.ColliderDesc.cuboid(0.375, 0.375, 0.375);
   }
+  if (type === 'd10' || type === 'd100') {
+    const verts = getPentagonalTrapezohedronVertices(0.6);
+    return (
+      rapier.ColliderDesc.convexHull(verts) ?? rapier.ColliderDesc.ball(0.55)
+    );
+  }
+  const verts = getHullVerts(type);
+  if (!verts) return rapier.ColliderDesc.ball(0.55);
+  const fallbackRadius = type === 'd4' ? 0.45 : 0.55;
+  return (
+    rapier.ColliderDesc.convexHull(verts) ??
+    rapier.ColliderDesc.ball(fallbackRadius)
+  );
 }
+
+/** Approximate bounding radius per die — used to derive the per-die
+ *  settle-Y ceiling so a leaning D20 or D4 isn't measured against D6's
+ *  half-edge. */
+const DIE_RADIUS: Record<DiceType, number> = {
+  d4: 0.58,
+  d6: 0.375,
+  d8: 0.6,
+  d10: 0.6,
+  d12: 0.55,
+  d20: 0.6,
+  d100: 0.6,
+};
 
 // ===========================================================================
 // Legacy decorative dice (RNG path, kept for D10 / D100)
@@ -736,8 +888,8 @@ function createLegacyPhysicsDie(
       z: (Math.random() - 0.5) * 16,
     })
     .setLinearDamping(0.4)
-    .setAngularDamping(0.55)
-    .setCcdEnabled(true);
+    .setAngularDamping(0.55);
+  // CCD off — see note in the throw-builder above.
 
   const body = world.createRigidBody(bodyDesc);
   const colliderDesc = createColliderDesc(rapier, type)

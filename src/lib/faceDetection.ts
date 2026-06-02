@@ -143,20 +143,21 @@ function labelFaces(normals: THREE.Vector3[]): FaceEntry[] {
     let bestDot = -0.5; // require opposite-ish (dot < -0.5)
     for (let j = i + 1; j < n; j++) {
       if (used[j]) continue;
-      const d = normals[i].dot(normals[j]);
+      // Both `i` and `j` are in [0, n) so the Vector3s exist.
+      const d = normals[i]!.dot(normals[j]!);
       if (d < bestDot) {
         bestDot = d;
         best = j;
       }
     }
     if (best !== -1) {
-      faces[i].value = next;
-      faces[best].value = total - next;
+      faces[i]!.value = next;
+      faces[best]!.value = total - next;
       used[i] = 1;
       used[best] = 1;
       next++;
     } else {
-      faces[i].value = next++;
+      faces[i]!.value = next++;
       used[i] = 1;
     }
   }

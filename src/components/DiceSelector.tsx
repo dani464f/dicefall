@@ -1,3 +1,4 @@
+import { useRef, type KeyboardEvent } from 'react';
 import { ALL_DICE, type DiceType } from '../types/dice';
 
 interface DiceSelectorProps {
@@ -8,15 +9,54 @@ interface DiceSelectorProps {
 /**
  * Tavern dice rack — horizontal row of D4..D100 with thin gold dividers
  * between them. Active die glows gold; rest are subtle parchment-on-leather.
+ *
+ * A11y: rendered as role=radiogroup with arrow-key navigation. Single Tab
+ * stop — Tab focuses the active die, then ←/→ (and Home/End) move the
+ * selection. Mirrors how mutually-exclusive selectors are expected to
+ * behave by screen-reader users (WAI-ARIA APG: Radio Group).
  */
 export function DiceSelector({ selected, onSelect }: DiceSelectorProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
+    const i = ALL_DICE.indexOf(selected);
+    if (i < 0) return;
+    let next: DiceType | null = null;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      next = ALL_DICE[(i + 1) % ALL_DICE.length] ?? null;
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      next = ALL_DICE[(i - 1 + ALL_DICE.length) % ALL_DICE.length] ?? null;
+    } else if (e.key === 'Home') {
+      next = ALL_DICE[0] ?? null;
+    } else if (e.key === 'End') {
+      next = ALL_DICE[ALL_DICE.length - 1] ?? null;
+    }
+    if (next) {
+      e.preventDefault();
+      onSelect(next);
+      // Re-focus the newly active radio so screen readers announce it.
+      window.setTimeout(() => {
+        const root = containerRef.current;
+        if (!root) return;
+        const btn = root.querySelector<HTMLButtonElement>(
+          `[data-die="${next}"]`,
+        );
+        btn?.focus({ preventScroll: true });
+      }, 0);
+    }
+  };
+
   return (
     <div
+      ref={containerRef}
+      role="radiogroup"
+      aria-label="Die type"
       className="relative flex items-stretch w-full overflow-hidden"
       style={{
         background:
-          'linear-gradient(180deg, rgba(18,10,6,0.72) 0%, rgba(10,6,3,0.82) 100%)',
-        border: '1px solid rgba(201, 164, 92, 0.35)',
+          'linear-gradient(180deg, color-mix(in srgb, var(--color-tray-deep) 72%, transparent) 0%, color-mix(in srgb, var(--color-tray-deep) 82%, transparent) 100%)',
+        border:
+          '1px solid color-mix(in srgb, var(--color-gold) 35%, transparent)',
         borderRadius: '10px',
         boxShadow: 'inset 0 0 18px rgba(0,0,0,0.6)',
       }}
@@ -27,7 +67,13 @@ export function DiceSelector({ selected, onSelect }: DiceSelectorProps) {
           <button
             key={d}
             type="button"
+            role="radio"
+            aria-checked={isActive}
+            aria-label={d.toUpperCase()}
+            data-die={d}
+            tabIndex={isActive ? 0 : -1}
             onClick={() => onSelect(d)}
+            onKeyDown={onKeyDown}
             className={
               'relative flex-1 flex flex-col items-center justify-center py-2 transition-all duration-150 active:scale-95 ' +
               (isActive ? 'text-gold' : 'text-secondary hover:text-ivory')
@@ -36,8 +82,9 @@ export function DiceSelector({ selected, onSelect }: DiceSelectorProps) {
               isActive
                 ? {
                     background:
-                      'radial-gradient(ellipse at center, rgba(201,164,92,0.18) 0%, transparent 70%)',
-                    textShadow: '0 0 10px rgba(201,164,92,0.55)',
+                      'radial-gradient(ellipse at center, color-mix(in srgb, var(--color-gold) 18%, transparent) 0%, transparent 70%)',
+                    textShadow:
+                      '0 0 10px color-mix(in srgb, var(--color-gold) 55%, transparent)',
                   }
                 : undefined
             }
@@ -58,8 +105,8 @@ export function DiceSelector({ selected, onSelect }: DiceSelectorProps) {
                 className="absolute inset-x-2 -bottom-px h-[2px] rounded-full"
                 style={{
                   background:
-                    'linear-gradient(90deg, transparent 0%, #c9a45c 50%, transparent 100%)',
-                  boxShadow: '0 0 8px #c9a45c',
+                    'linear-gradient(90deg, transparent 0%, var(--color-gold) 50%, transparent 100%)',
+                  boxShadow: '0 0 8px var(--color-gold)',
                 }}
               />
             )}

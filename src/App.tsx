@@ -1,6 +1,12 @@
-import { useCallback, useRef, useState } from 'react';
-import { DiceTray } from './components/DiceTray';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { DiceSelector } from './components/DiceSelector';
+
+// The 3D scene + Rapier WASM are heavy. Lazy-load them so the React shell
+// (top bar, controls, sheets) can paint immediately and the dice tray
+// arrives in a second chunk a moment later.
+const DiceTray = lazy(() =>
+  import('./components/DiceTray').then((m) => ({ default: m.DiceTray })),
+);
 import { ResultPanel } from './components/ResultPanel';
 import { PresetsPanel } from './components/PresetsPanel';
 import { RollHistory } from './components/RollHistory';
@@ -44,13 +50,31 @@ function effectiveReducedMotion(s: Settings): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+/** Mirror the resolved reduced-motion state onto <html> so the
+ *  `html[data-reduced-motion='true']` CSS rule in index.css can suppress
+ *  every Tailwind transition + keyframe animation. */
+function useReducedMotionAttribute(reduced: boolean): void {
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    if (reduced) root.setAttribute('data-reduced-motion', 'true');
+    else root.removeAttribute('data-reduced-motion');
+  }, [reduced]);
+}
+
 export default function App() {
   const [diceType, setDiceType] = useState<DiceType>(DEFAULT_DIE);
   const [quantity, setQuantity] = useState(DEFAULT_QUANTITY);
-  const [profBonus, setProfBonus] = useLocalStorage<number>(
+  const [profBonusRaw, setProfBonus] = useLocalStorage<number>(
     PROF_BONUS_KEY,
     DEFAULT_PROF_BONUS,
   );
+  // Hand-edited storage or a future build shifting the range could leave a
+  // value outside [MIN, MAX]; clamp on read so the UI can never display or
+  // apply a bonus the controls couldn't have produced.
+  const profBonus = Number.isFinite(profBonusRaw)
+    ? Math.min(PROF_BONUS_MAX, Math.max(PROF_BONUS_MIN, Math.trunc(profBonusRaw)))
+    : DEFAULT_PROF_BONUS;
   const {
     lastRoll,
     isRolling,
@@ -62,15 +86,24 @@ export default function App() {
   } = useDiceRoller();
   const [presets, setPresets] = useLocalStorage<Preset[]>(PRESETS_KEY, []);
   const [history, setHistory] = useLocalStorage<RollResult[]>(HISTORY_KEY, []);
-  const [settings, setSettings] = useLocalStorage<Settings>(
+  const [settingsRaw, setSettings] = useLocalStorage<Settings>(
     SETTINGS_KEY,
     DEFAULT_SETTINGS,
   );
+  // Defensive — if a previous build wrote a Settings shape that's missing
+  // a field (or storage was hand-edited), merge over DEFAULT_SETTINGS so
+  // every downstream `settings.field` access is well-defined. Cheap and
+  // forwards-compatible with adding new Settings keys in future builds.
+  const settings: Settings = { ...DEFAULT_SETTINGS, ...settingsRaw };
   const [openSheet, setOpenSheet] = useState<SheetName>(null);
 
   // Skin system — owns active/unlocked/owned-premium state and mirrors the
   // active skin's UiTheme into :root CSS variables on every change.
   const skins = useSkinSystem();
+
+  // Mirror the user's reduced-motion choice onto <html> so the CSS rule in
+  // index.css disables every Tailwind transition + keyframe animation.
+  useReducedMotionAttribute(effectiveReducedMotion(settings));
 
   const recordRoll = useCallback(
     (result: RollResult) => {
@@ -92,12 +125,20 @@ export default function App() {
 
   // The scene reports the raw face values it read; we add the user's
   // proficiency bonus on top here so it lands in the same RollResult.
+  // The token guard inside commitPhysicsResult drops stale results (e.g.
+  // user hit Clear, or fired a fresh throw before the previous resolved).
   const profBonusRef = useRef(profBonus);
   profBonusRef.current = profBonus;
   const handlePhysicsResult = useCallback(
-    (dt: DiceType, qty: number, values: number[]) => {
-      const result = commitPhysicsResult(dt, qty, values, profBonusRef.current);
-      recordRoll(result);
+    (dt: DiceType, qty: number, values: number[], token: number) => {
+      const result = commitPhysicsResult(
+        dt,
+        qty,
+        values,
+        profBonusRef.current,
+        token,
+      );
+      if (result) recordRoll(result);
     },
     [commitPhysicsResult, recordRoll],
   );
@@ -135,13 +176,15 @@ export default function App() {
   return (
     <div className="fixed inset-0 overflow-hidden bg-bg">
       {/* Full-screen 3D tavern scene */}
-      <DiceTray
-        result={lastRoll}
-        isRolling={isRolling}
-        throwRequest={throwRequest}
-        onResult={handlePhysicsResult}
-        sceneTheme={skins.activeSkin.sceneTheme}
-      />
+      <Suspense fallback={<div aria-hidden className="absolute inset-0 bg-bg" />}>
+        <DiceTray
+          result={lastRoll}
+          isRolling={isRolling}
+          throwRequest={throwRequest}
+          onResult={handlePhysicsResult}
+          sceneTheme={skins.activeSkin.sceneTheme}
+        />
+      </Suspense>
 
       {/* Vignette over the scene for cinematic edges */}
       <div
@@ -163,12 +206,15 @@ export default function App() {
             'linear-gradient(180deg, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0) 100%)',
         }}
       >
-        <CircleButton label="Menu" onClick={() => setOpenSheet('history')}>
+        <CircleButton label="Recent rolls" onClick={() => setOpenSheet('history')}>
           <HamburgerIcon />
         </CircleButton>
         <h1
           className="font-display text-xl text-gold uppercase tracking-[0.4em]"
-          style={{ textShadow: '0 0 14px rgba(201,164,92,0.4)' }}
+          style={{
+            textShadow:
+              '0 0 14px color-mix(in srgb, var(--color-gold) 40%, transparent)',
+          }}
         >
           Tavern
         </h1>
@@ -263,37 +309,41 @@ interface QuantityPillProps {
   onChange: (n: number) => void;
 }
 
+const QUANTITY_MIN = 1;
+const QUANTITY_MAX = 20;
+
 function QuantityPill({ diceType, quantity, onChange }: QuantityPillProps) {
-  const dec = () => onChange(Math.max(1, quantity - 1));
-  const inc = () => onChange(Math.min(20, quantity + 1));
+  const dec = () => onChange(Math.max(QUANTITY_MIN, quantity - 1));
+  const inc = () => onChange(Math.min(QUANTITY_MAX, quantity + 1));
   return (
     <div
       className="self-center flex items-center gap-2 px-3 py-1.5 rounded-full"
+      role="group"
+      aria-label={`Quantity, ${quantity} ${diceType.toUpperCase()}`}
       style={{
-        background:
-          'linear-gradient(180deg, rgba(20,12,8,0.78) 0%, rgba(10,6,3,0.88) 100%)',
-        border: '1px solid rgba(201, 164, 92, 0.5)',
+        background: PILL_SURFACE_GRADIENT,
+        border:
+          '1px solid color-mix(in srgb, var(--color-gold) 50%, transparent)',
       }}
     >
-      <button
-        type="button"
+      <PillStepper
+        label="Decrease quantity"
+        symbol="−"
         onClick={dec}
-        aria-label="Decrease quantity"
-        className="w-6 h-6 rounded-full text-gold/80 hover:text-gold text-base leading-none flex items-center justify-center"
+        disabled={quantity <= QUANTITY_MIN}
+      />
+      <span
+        className="text-xs uppercase tracking-[0.2em] text-gold/70 tabular-nums"
+        aria-live="polite"
       >
-        −
-      </button>
-      <span className="text-xs uppercase tracking-[0.2em] text-gold/70">
         {quantity} × {diceType.toUpperCase()}
       </span>
-      <button
-        type="button"
+      <PillStepper
+        label="Increase quantity"
+        symbol="+"
         onClick={inc}
-        aria-label="Increase quantity"
-        className="w-6 h-6 rounded-full text-gold/80 hover:text-gold text-base leading-none flex items-center justify-center"
-      >
-        +
-      </button>
+        disabled={quantity >= QUANTITY_MAX}
+      />
     </div>
   );
 }
@@ -313,40 +363,66 @@ function ProfBonusPill({ value, min, max, onChange }: ProfBonusPillProps) {
   return (
     <div
       className="flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-colors"
+      role="group"
+      aria-label={`Proficiency bonus ${display}`}
       style={{
-        background:
-          'linear-gradient(180deg, rgba(20,12,8,0.78) 0%, rgba(10,6,3,0.88) 100%)',
-        border: active
-          ? '1px solid rgba(201, 164, 92, 0.85)'
-          : '1px solid rgba(201, 164, 92, 0.35)',
-        boxShadow: active ? '0 0 12px rgba(201,164,92,0.2)' : undefined,
+        background: PILL_SURFACE_GRADIENT,
+        border: `1px solid color-mix(in srgb, var(--color-gold) ${
+          active ? 85 : 35
+        }%, transparent)`,
+        boxShadow: active
+          ? '0 0 12px color-mix(in srgb, var(--color-gold) 20%, transparent)'
+          : undefined,
       }}
     >
-      <button
-        type="button"
+      <PillStepper
+        label="Decrease proficiency bonus"
+        symbol="−"
         onClick={dec}
-        aria-label="Decrease proficiency bonus"
         disabled={value <= min}
-        className="w-6 h-6 rounded-full text-gold/80 hover:text-gold text-base leading-none flex items-center justify-center disabled:opacity-30"
-      >
-        −
-      </button>
+      />
       <span
         className="text-xs uppercase tracking-[0.2em] text-gold/85 tabular-nums"
         title="Proficiency bonus added to every roll"
+        aria-live="polite"
       >
         Prof {display}
       </span>
-      <button
-        type="button"
+      <PillStepper
+        label="Increase proficiency bonus"
+        symbol="+"
         onClick={inc}
-        aria-label="Increase proficiency bonus"
         disabled={value >= max}
-        className="w-6 h-6 rounded-full text-gold/80 hover:text-gold text-base leading-none flex items-center justify-center disabled:opacity-30"
-      >
-        +
-      </button>
+      />
     </div>
+  );
+}
+
+/** Shared surface gradient for the bottom-stack pills. Drawn from
+ *  `--color-tray-deep` at two alpha levels so it re-tints with the skin. */
+const PILL_SURFACE_GRADIENT =
+  'linear-gradient(180deg, color-mix(in srgb, var(--color-tray-deep) 78%, transparent) 0%, color-mix(in srgb, var(--color-tray-deep) 88%, transparent) 100%)';
+
+interface PillStepperProps {
+  label: string;
+  symbol: '+' | '−';
+  onClick: () => void;
+  disabled: boolean;
+}
+
+/** 44×44 hit target with a small visible cap. Meets iOS HIG / WCAG 2.5.5
+ *  Target Size without making the visible pill look bloated. */
+function PillStepper({ label, symbol, onClick, disabled }: PillStepperProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      disabled={disabled}
+      className="relative w-6 h-6 rounded-full text-gold/80 hover:text-gold text-base leading-none flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed before:absolute before:-inset-2.5 before:content-['']"
+    >
+      {symbol}
+    </button>
   );
 }
 
@@ -364,25 +440,30 @@ function RollButton({ onClick, disabled, rolling }: RollButtonProps) {
       disabled={disabled}
       className="relative w-full rounded-2xl py-3.5 transition-all duration-100 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
       style={{
+        // Three-stop gold gradient derived from --color-gold so a cool-palette
+        // skin (Obsidian Court) gets a sapphire-leaning button automatically.
         background:
-          'linear-gradient(180deg, #e6c378 0%, #c9a45c 45%, #8c6c3a 100%)',
+          'linear-gradient(180deg, color-mix(in srgb, var(--color-gold) 70%, white 30%) 0%, var(--color-gold) 45%, color-mix(in srgb, var(--color-gold) 65%, black 35%) 100%)',
         border: '1px solid rgba(0,0,0,0.55)',
         boxShadow:
-          '0 8px 24px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,230,180,0.65), inset 0 -2px 4px rgba(0,0,0,0.4)',
+          '0 8px 24px rgba(0,0,0,0.55), inset 0 1px 0 color-mix(in srgb, var(--color-gold) 30%, white 70%), inset 0 -2px 4px rgba(0,0,0,0.4)',
       }}
     >
       <span
         className="block font-display text-2xl uppercase tracking-[0.45em] leading-none"
         style={{
-          color: '#1c0f06',
-          textShadow: '0 1px 0 rgba(255,230,180,0.55)',
+          color: 'var(--color-tray-deep)',
+          textShadow:
+            '0 1px 0 color-mix(in srgb, var(--color-gold) 30%, white 60%)',
         }}
       >
         {rolling ? 'Rolling' : 'Roll'}
       </span>
       <span
         className="block text-[9px] uppercase tracking-[0.4em] mt-1"
-        style={{ color: 'rgba(28,15,6,0.65)' }}
+        style={{
+          color: 'color-mix(in srgb, var(--color-tray-deep) 65%, transparent)',
+        }}
       >
         Tap to roll
       </span>
@@ -450,10 +531,12 @@ function CircleButton({ label, onClick, children }: CircleButtonProps) {
       type="button"
       onClick={onClick}
       aria-label={label}
-      className="w-9 h-9 rounded-full flex items-center justify-center text-gold/85 hover:text-gold transition-colors"
+      className="relative w-11 h-11 rounded-full flex items-center justify-center text-gold/85 hover:text-gold transition-colors"
       style={{
-        background: 'rgba(10,6,3,0.55)',
-        border: '1px solid rgba(201,164,92,0.45)',
+        background:
+          'color-mix(in srgb, var(--color-tray-deep) 55%, transparent)',
+        border:
+          '1px solid color-mix(in srgb, var(--color-gold) 45%, transparent)',
       }}
     >
       {children}

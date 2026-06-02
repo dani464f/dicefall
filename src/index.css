@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* The active skin writes these same custom properties at runtime via
+ * applyUiTheme(); every other component reads them through Tailwind
+ * utilities like `bg-bg` / `text-gold` / `border-subtle`. Keep the
+ * defaults here in sync with `tavernClassic` in skinRegistry.ts.        */
 @theme {
   --color-bg: #101014;
   --color-tray: #2a1d16;
@@ -47,6 +51,46 @@ textarea {
 button {
   -webkit-appearance: none;
   appearance: none;
+}
+
+/* Restore a visible focus ring for keyboard / switch-control users.
+ * WCAG 2.4.7 — we strip native button styling above, so without this every
+ * focusable control would be invisible to keyboard nav. Uses the active
+ * skin's accent so the ring re-tints when the user changes skins.            */
+button:focus-visible,
+a:focus-visible,
+[role='switch']:focus-visible,
+[role='radio']:focus-visible,
+[role='spinbutton']:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--color-gold);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
+/* Honor the OS-level prefers-reduced-motion AND the in-app
+ * Settings → Reduced Motion toggle (which sets data-reduced-motion on
+ * <html>). Kills CSS keyframe animations and transitions almost entirely
+ * while still letting React mount/unmount work.                            */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+html[data-reduced-motion='true'] *,
+html[data-reduced-motion='true'] *::before,
+html[data-reduced-motion='true'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
 }
 
 /* --- Roll animation ---------------------------------------------------- */

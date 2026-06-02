@@ -53,6 +53,12 @@ export function getActiveSkin(activeSkinId: string | null | undefined): Skin {
   if (fromStorage) return fromStorage;
   const fallback = getSkinById(DEFAULT_SKIN_ID);
   if (fallback) return fallback;
-  // Shouldn't happen unless the registry is empty.
-  return ALL_SKINS[0];
+  // Hard fallback: the registry is empty. This would be a build-time error,
+  // not a runtime one — `ALL_SKINS` is a const literal — but the type system
+  // can't see that, so we assert.
+  const first = ALL_SKINS[0];
+  if (!first) {
+    throw new Error('[skins] registry is empty');
+  }
+  return first;
 }

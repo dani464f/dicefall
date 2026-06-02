@@ -46,23 +46,24 @@ export function createPentagonalTrapezohedronGeometry(
   const TOP = 0;
   const BOTTOM = 11;
 
-  // Top 5 kite faces: each face = top + upper[i] + lower[i] + upper[(i+1)%5]
-  // Triangulated CCW from outside.
+  // Top 5 kite faces. Wound CCW *from outside* so the cross product points
+  // outward (was CW — previously made D10/D100 back-culled and inverted the
+  // face-detection result to 11−N / 110−N).
   for (let i = 0; i < 5; i++) {
     const ui = 1 + i;
     const uNext = 1 + ((i + 1) % 5);
     const li = 6 + i; // the lower-ring vertex sitting between ui and uNext angularly
-    indices.push(TOP, ui, li);
-    indices.push(TOP, li, uNext);
+    indices.push(TOP, li, ui);
+    indices.push(TOP, uNext, li);
   }
-  // Bottom 5 kite faces: each face = bottom + lower[i] + upper[(i+1)%5] + lower[(i+1)%5]
-  // Triangulated CCW from outside.
+  // Bottom 5 kite faces. Same winding swap as the top loop — produces an
+  // outward-pointing normal for each face under the right-hand rule.
   for (let i = 0; i < 5; i++) {
     const li = 6 + i;
     const lNext = 6 + ((i + 1) % 5);
     const uNext = 1 + ((i + 1) % 5);
-    indices.push(BOTTOM, lNext, uNext);
-    indices.push(BOTTOM, uNext, li);
+    indices.push(BOTTOM, uNext, lNext);
+    indices.push(BOTTOM, li, uNext);
   }
 
   const geom = new THREE.BufferGeometry();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
 import { useLocalStorage } from './useLocalStorage';
 import {
   ACTIVE_SKIN_KEY,
@@ -55,12 +55,32 @@ export function useSkinSystem() {
     [activeSkinId],
   );
 
-  // Mirror the active skin into :root CSS vars so every Tailwind utility
-  // (bg-bg, text-gold, etc.) sees the new palette without any component
-  // having to read uiTheme directly.
-  useEffect(() => {
+  // Mirror the active skin into :root CSS vars BEFORE paint so a non-default
+  // skin doesn't briefly flash the default palette on cold load. (For the
+  // first paint specifically, the inline-script in index.html would be
+  // even better — but useLayoutEffect at least catches subsequent changes.)
+  useLayoutEffect(() => {
     applyUiTheme(activeSkin.uiTheme);
   }, [activeSkin]);
+
+  // Reconcile activeSkinId against unlock state on mount + whenever the
+  // unlock sets change. If storage was hand-edited or a future build
+  // re-locks a previously-equipped skin, this falls back to the default
+  // so the user can't stay locked into a skin they don't own.
+  useEffect(() => {
+    if (activeSkin.category === 'free') return;
+    if (
+      activeSkin.category === 'premium' &&
+      !ownedPremiumSet.has(activeSkin.id)
+    ) {
+      setActiveSkinId(DEFAULT_SKIN_ID);
+    } else if (
+      activeSkin.category === 'unlockable' &&
+      !unlockedSet.has(activeSkin.id)
+    ) {
+      setActiveSkinId(DEFAULT_SKIN_ID);
+    }
+  }, [activeSkin, ownedPremiumSet, unlockedSet, setActiveSkinId]);
 
   const isUnlocked = useCallback(
     (id: string) => isSkinUnlockedPure(id, unlockedSet, ownedPremiumSet),

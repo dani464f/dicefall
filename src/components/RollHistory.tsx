@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
+import { formatDiceFormula } from '../lib/dice';
 import type { RollResult } from '../types/dice';
 
 interface RollHistoryProps {
@@ -26,7 +27,7 @@ export function RollHistory({ open, onClose, history, onClear }: RollHistoryProp
               >
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="font-display text-sm text-secondary tabular-nums">
-                    {formatFormula(r)}
+                    {formatDiceFormula(r)}
                   </span>
                   <span className="font-display text-2xl text-ivory tabular-nums">
                     {r.total}
@@ -64,17 +65,6 @@ export function RollHistory({ open, onClose, history, onClear }: RollHistoryProp
       )}
     </Sheet>
   );
-}
-
-function formatFormula(r: {
-  diceType: string;
-  quantity: number;
-  modifier: number;
-}): string {
-  const base = `${r.quantity}${r.diceType}`;
-  if (r.modifier === 0) return base;
-  if (r.modifier > 0) return `${base} + ${r.modifier}`;
-  return `${base} − ${Math.abs(r.modifier)}`;
 }
 
 function RelativeTime({ ts }: { ts: number }) {

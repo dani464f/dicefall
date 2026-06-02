@@ -4,8 +4,8 @@ import type { Skin } from '../../types/skins';
  * Central skin registry. Source of truth for what skins exist.
  *
  * NOTE: These are intentionally placeholder visuals. The premium and
- * unlockable skins use small accent shifts so that swapping into them is
- * visibly distinct from the free baseline, but they are not "designed"
+ * unlockable skins use accent + surface shifts so that swapping into them
+ * is visibly distinct from the free baseline, but they are not "designed"
  * skins yet — real art will land later. Keep the list short while the
  * system is being proven out.
  *
@@ -19,8 +19,8 @@ export const ARCANE_VAULT_ID = 'unlockable.arcane-vault';
 export const DEFAULT_SKIN_ID = TAVERN_CLASSIC_ID;
 
 /**
- * The free baseline. UI values mirror the current --color-* tokens in
- * index.css, so equipping this skin is a visual no-op against the default
+ * The free baseline. UI values mirror the defaults in index.css's @theme
+ * block, so equipping this skin is a visual no-op against the default
  * stylesheet — it confirms the system is working without changing how
  * the app looks for a first-time user.
  */
@@ -31,13 +31,17 @@ const tavernClassic: Skin = {
     'The original Dicefall look — warm candlelight on dark walnut, gold on black dice.',
   category: 'free',
   unlockStatus: 'unlocked',
-  previewImage: undefined,
   uiTheme: {
     background: '#101014',
     surface: '#2a1d16',
+    surfaceDeep: '#1b120d',
+    surfaceWarm: '#3a2a1f',
     primaryText: '#f4e8d0',
     secondaryText: '#b8aa91',
     accent: '#c9a45c',
+    accentSoft: '#b08f4d',
+    danger: '#a6413b',
+    special: '#6f8cff',
     border: 'rgba(255, 255, 255, 0.08)',
     button: '#c9a45c',
     buttonText: '#1b120d',
@@ -62,10 +66,10 @@ const tavernClassic: Skin = {
 };
 
 /**
- * Premium placeholder — cooler, royal-court palette. Locked by default;
- * the card shows "Premium · Coming Soon" and cannot be equipped until a
- * future purchase path unlocks it. There is NO dev-unlock affordance for
- * premium skins per the brief.
+ * Premium placeholder — cool royal-court palette. Locked by default; the
+ * card shows "Premium · Coming Soon" and cannot be equipped until a future
+ * purchase path unlocks it. There is NO dev-unlock affordance for premium
+ * skins per the brief.
  */
 const obsidianCourt: Skin = {
   id: OBSIDIAN_COURT_ID,
@@ -79,9 +83,14 @@ const obsidianCourt: Skin = {
   uiTheme: {
     background: '#0b0d14',
     surface: '#181d2a',
+    surfaceDeep: '#0e1119',
+    surfaceWarm: '#26304a',
     primaryText: '#e6ecf6',
     secondaryText: '#94a3bf',
     accent: '#7ea0ff',
+    accentSoft: '#5e7fd6',
+    danger: '#d36b8a',
+    special: '#7adcc9',
     border: 'rgba(140, 170, 220, 0.10)',
     button: '#7ea0ff',
     buttonText: '#0b0d14',
@@ -108,8 +117,8 @@ const obsidianCourt: Skin = {
 /**
  * Unlockable placeholder — emerald arcane vault. Locked by default. The
  * card shows "Unlockable" + a small dev-test unlock button (clearly marked
- * temporary) so the unlock/equip path can be exercised end-to-end before
- * a real achievement system ships.
+ * temporary, dev-only) so the unlock/equip path can be exercised end-to-end
+ * before a real achievement system ships.
  */
 const arcaneVault: Skin = {
   id: ARCANE_VAULT_ID,
@@ -123,9 +132,14 @@ const arcaneVault: Skin = {
   uiTheme: {
     background: '#0a1310',
     surface: '#16241c',
+    surfaceDeep: '#091610',
+    surfaceWarm: '#243828',
     primaryText: '#e8f1ea',
     secondaryText: '#8eb19a',
     accent: '#7dd6a0',
+    accentSoft: '#5fb286',
+    danger: '#d68f6b',
+    special: '#a07ddc',
     border: 'rgba(125, 214, 160, 0.12)',
     button: '#7dd6a0',
     buttonText: '#0a1310',

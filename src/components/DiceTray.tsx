@@ -7,13 +7,18 @@ interface DiceTrayProps {
   result: RollResult | null;
   isRolling: boolean;
   throwRequest: ThrowRequest | null;
-  onResult: (diceType: DiceType, quantity: number, values: number[]) => void;
+  onResult: (
+    diceType: DiceType,
+    quantity: number,
+    values: number[],
+    token: number,
+  ) => void;
   /**
    * Active skin's scene theme. Plumbed through to DiceScene so a future
    * change can swap table / tray / dice materials and lighting without
    * touching this component's signature. Not yet honored inside the scene.
    */
-  sceneTheme?: SceneTheme;
+  sceneTheme?: SceneTheme | undefined;
 }
 
 /**

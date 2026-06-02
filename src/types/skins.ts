@@ -14,13 +14,41 @@ export type SkinCategory = 'free' | 'premium' | 'unlockable';
 
 export type UnlockStatus = 'unlocked' | 'locked';
 
-/** UI colors applied to the React shell. Values are CSS color strings. */
+/**
+ * UI colors applied to the React shell. Each field maps 1:1 to a CSS
+ * custom property that Tailwind v4's @theme block declares in index.css.
+ * Equipping a skin writes these values via applyUiTheme() so every
+ * Tailwind utility (bg-bg, text-gold, border-subtle, …) re-tints
+ * immediately.
+ *
+ * Token map (UiTheme → CSS variable):
+ *   background   → --color-bg
+ *   surface      → --color-tray
+ *   surfaceDeep  → --color-tray-deep
+ *   surfaceWarm  → --color-tray-warm
+ *   primaryText  → --color-ivory
+ *   secondaryText→ --color-secondary
+ *   accent       → --color-gold
+ *   accentSoft   → --color-gold-soft
+ *   danger       → --color-danger
+ *   special      → --color-special
+ *   border       → --color-subtle
+ *   button       → (skin authors only — drives custom button gradients)
+ *   buttonText   → (skin authors only — drives custom button label color)
+ *
+ * Values are CSS color strings (any valid CSS color — hex, rgb, rgba, etc).
+ */
 export interface UiTheme {
   background: string;
   surface: string;
+  surfaceDeep: string;
+  surfaceWarm: string;
   primaryText: string;
   secondaryText: string;
   accent: string;
+  accentSoft: string;
+  danger: string;
+  special: string;
   border: string;
   button: string;
   buttonText: string;
@@ -61,11 +89,11 @@ export interface Skin {
   /** Current ownership / availability state, persisted locally. */
   unlockStatus: UnlockStatus;
   /** Short label shown on locked skins, e.g. "Premium" or "Unlockable". */
-  priceLabel?: string;
+  priceLabel?: string | undefined;
   /** Free-text reason a skin is locked, e.g. "Coming soon" or "Roll 100 D20s". */
-  unlockRequirement?: string;
+  unlockRequirement?: string | undefined;
   /** Optional preview image path; we use a CSS gradient swatch when absent. */
-  previewImage?: string;
+  previewImage?: string | undefined;
   uiTheme: UiTheme;
   sceneTheme: SceneTheme;
   audioTheme: AudioTheme;

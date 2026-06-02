@@ -147,10 +147,12 @@ function assignRadialUVs(
   for (const p of unique) centroid.add(p);
   centroid.divideScalar(unique.length);
 
-  // Face normal from the first triangle's winding.
-  const a = positions[0];
-  const b = positions[1];
-  const c = positions[2];
+  // Face normal from the first triangle's winding. We pushed three
+  // vertices into `positions` per triangle in `triangleIndices`, which is
+  // non-empty here (multi-triangle face guaranteed).
+  const a = positions[0]!;
+  const b = positions[1]!;
+  const c = positions[2]!;
   const normal = new THREE.Vector3()
     .subVectors(b, a)
     .cross(new THREE.Vector3().subVectors(c, a))
@@ -178,9 +180,9 @@ function assignRadialUVs(
   const R = 0.46; // UV-space radius — small canvas margin for the glyph
 
   for (let ti = 0; ti < triangleIndices.length; ti++) {
-    const t = triangleIndices[ti];
+    const t = triangleIndices[ti]!;
     for (let i = 0; i < 3; i++) {
-      const p = positions[ti * 3 + i];
+      const p = positions[ti * 3 + i]!;
       const v = p.clone().sub(centroid);
       const x = v.dot(right);
       const y = v.dot(upDir);
@@ -234,7 +236,7 @@ function computeTriangleFaceMapping(
     let bestIdx = 0;
     let bestDot = -Infinity;
     for (let f = 0; f < entries.length; f++) {
-      const d = entries[f].localNormal.dot(n);
+      const d = entries[f]!.localNormal.dot(n);
       if (d > bestDot) {
         bestDot = d;
         bestIdx = f;
@@ -273,16 +275,18 @@ export function buildFaceBakedDie(
   const geom = baseGeom.index ? baseGeom.toNonIndexed() : baseGeom.clone();
   baseGeom.dispose();
 
-  const triCount = geom.attributes.position.count / 3;
-  const pos = geom.attributes.position as THREE.BufferAttribute;
-  const uvs = new Float32Array(geom.attributes.position.count * 2);
+  // BufferGeometry.attributes is a Record under strict TS — the .position
+  // attribute is guaranteed to exist after we built the geometry above.
+  const pos = geom.attributes.position! as THREE.BufferAttribute;
+  const triCount = pos.count / 3;
+  const uvs = new Float32Array(pos.count * 2);
 
   // Group triangles by face — multi-triangle faces (D12 pentagon = 5 tris,
   // D10/D100 kite = 2 tris) need a shared radial UV layout so the glyph
   // appears once at the face center, not once per sub-triangle.
   const trianglesPerFace = new Map<number, number[]>();
   for (let t = 0; t < triCount; t++) {
-    const f = mapping[t];
+    const f = mapping[t]!;
     const arr = trianglesPerFace.get(f);
     if (arr) arr.push(t);
     else trianglesPerFace.set(f, [t]);
@@ -291,7 +295,7 @@ export function buildFaceBakedDie(
   for (const [, tris] of trianglesPerFace) {
     if (tris.length === 1) {
       // Triangular face: keep the centered equilateral UV.
-      const t = tris[0];
+      const t = tris[0]!;
       const v0 = t * 3;
       const v1 = t * 3 + 1;
       const v2 = t * 3 + 2;
