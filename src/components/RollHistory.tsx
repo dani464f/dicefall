@@ -35,14 +35,38 @@ export function RollHistory({ open, onClose, history, onClear }: RollHistoryProp
                   </span>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  {r.individualResults.map((n, i) => (
-                    <span
-                      key={i}
-                      className="px-1.5 py-0.5 rounded bg-tray-deep/70 border border-subtle text-xs text-ivory tabular-nums min-w-[24px] text-center"
-                    >
-                      {n}
-                    </span>
-                  ))}
+                  {(() => {
+                    const mode = r.rollMode ?? 'normal';
+                    const keptIdx =
+                      mode === 'advantage'
+                        ? r.individualResults.indexOf(
+                            Math.max(...r.individualResults),
+                          )
+                        : mode === 'disadvantage'
+                          ? r.individualResults.indexOf(
+                              Math.min(...r.individualResults),
+                            )
+                          : -1;
+                    return r.individualResults.map((n, i) => {
+                      const kept = i === keptIdx;
+                      const dropped = mode !== 'normal' && !kept;
+                      return (
+                        <span
+                          key={i}
+                          className={
+                            'px-1.5 py-0.5 rounded text-xs tabular-nums min-w-[24px] text-center ' +
+                            (kept
+                              ? 'bg-tray-deep border border-gold/60 text-gold font-semibold'
+                              : dropped
+                                ? 'bg-tray-deep/40 border border-subtle text-secondary/60 line-through'
+                                : 'bg-tray-deep/70 border border-subtle text-ivory')
+                          }
+                        >
+                          {n}
+                        </span>
+                      );
+                    });
+                  })()}
                   {r.modifier !== 0 && (
                     <span className="px-1.5 py-0.5 text-xs text-secondary tabular-nums">
                       {r.modifier > 0 ? `+${r.modifier}` : r.modifier}

@@ -22,6 +22,7 @@ import {
   DEFAULT_SETTINGS,
   type DiceType,
   type Preset,
+  type RollMode,
   type RollResult,
   type RollSetup,
   type Settings,
@@ -67,6 +68,11 @@ function useReducedMotionAttribute(reduced: boolean): void {
 export default function App() {
   const [diceType, setDiceType] = useState<DiceType>(DEFAULT_DIE);
   const [quantity, setQuantity] = useState(DEFAULT_QUANTITY);
+  // Roll mode is intentionally session-only (not persisted). Advantage is
+  // a situational, per-encounter state — surviving across reloads would
+  // create silent "why is my roll wrong" moments. Toggling it explicitly
+  // each time is the safer default.
+  const [rollMode, setRollMode] = useState<RollMode>('normal');
   const [profBonusRaw, setProfBonus] = useLocalStorage<number>(
     PROF_BONUS_KEY,
     DEFAULT_PROF_BONUS,
@@ -136,14 +142,13 @@ export default function App() {
     diceAudio.ensureInit();
     const usePhysics =
       isPhysicsDie(diceType) && !effectiveReducedMotion(settings);
+    // adv/dis always throw exactly 2 dice; the whoosh + scene match that.
+    const effectiveQty = rollMode === 'normal' ? quantity : 2;
     if (usePhysics) {
-      // Quantity-scaled whoosh so 1 die ≠ a fistful. Capped at qty/4 so
-      // a 6-die throw is still distinguishable from a 12-die throw
-      // without becoming a roar.
-      diceAudio.playWhoosh(Math.min(1, 0.4 + quantity * 0.12));
-      throwDice(diceType, quantity);
+      diceAudio.playWhoosh(Math.min(1, 0.4 + effectiveQty * 0.12));
+      throwDice(diceType, quantity, rollMode);
     } else {
-      const result = roll(diceType, quantity, profBonus);
+      const result = roll(diceType, quantity, profBonus, rollMode);
       recordRoll(result);
     }
   };
@@ -154,6 +159,11 @@ export default function App() {
   // user hit Clear, or fired a fresh throw before the previous resolved).
   const profBonusRef = useRef(profBonus);
   profBonusRef.current = profBonus;
+  // rollMode mirrored into a ref so the async commit reflects whatever the
+  // toggle was set to at *throw* time, not at settle time. Switching the
+  // pill mid-flight doesn't retroactively change which die was kept.
+  const rollModeRef = useRef(rollMode);
+  rollModeRef.current = rollMode;
   const handlePhysicsResult = useCallback(
     (dt: DiceType, qty: number, values: number[], token: number) => {
       const result = commitPhysicsResult(
@@ -162,6 +172,7 @@ export default function App() {
         values,
         profBonusRef.current,
         token,
+        rollModeRef.current,
       );
       if (result) recordRoll(result);
     },
@@ -176,17 +187,25 @@ export default function App() {
   const handleLoadPreset = (preset: Preset) => {
     // Same gesture-bound init as handleRoll — loading a preset throws.
     diceAudio.ensureInit();
+    const presetMode: RollMode = preset.rollMode ?? 'normal';
     setDiceType(preset.diceType);
     setQuantity(preset.quantity);
     setProfBonus(preset.modifier);
+    setRollMode(presetMode);
     setOpenSheet(null);
     const usePhysics =
       isPhysicsDie(preset.diceType) && !effectiveReducedMotion(settings);
+    const effectiveQty = presetMode === 'normal' ? preset.quantity : 2;
     if (usePhysics) {
-      diceAudio.playWhoosh(Math.min(1, 0.4 + preset.quantity * 0.12));
-      throwDice(preset.diceType, preset.quantity);
+      diceAudio.playWhoosh(Math.min(1, 0.4 + effectiveQty * 0.12));
+      throwDice(preset.diceType, preset.quantity, presetMode);
     } else {
-      const result = roll(preset.diceType, preset.quantity, preset.modifier);
+      const result = roll(
+        preset.diceType,
+        preset.quantity,
+        preset.modifier,
+        presetMode,
+      );
       recordRoll(result);
     }
   };
@@ -199,6 +218,7 @@ export default function App() {
     diceType,
     quantity,
     modifier: profBonus,
+    rollMode,
   };
 
   return (
@@ -261,11 +281,12 @@ export default function App() {
         <div className="mx-auto w-full max-w-md flex flex-col gap-2.5">
           <ResultPanel result={lastRoll} isRolling={isRolling} />
           <DiceSelector selected={diceType} onSelect={setDiceType} />
-          <div className="flex items-center justify-center gap-2">
+          <div className="flex items-center justify-center flex-wrap gap-2">
             <QuantityPill
               diceType={diceType}
               quantity={quantity}
               onChange={setQuantity}
+              rollMode={rollMode}
             />
             <ProfBonusPill
               value={profBonus}
@@ -273,6 +294,7 @@ export default function App() {
               max={PROF_BONUS_MAX}
               onChange={setProfBonus}
             />
+            <AdvantagePill value={rollMode} onChange={setRollMode} />
           </div>
           <RollButton onClick={handleRoll} disabled={isRolling} rolling={isRolling} />
           <BottomNav
@@ -335,44 +357,123 @@ interface QuantityPillProps {
   diceType: DiceType;
   quantity: number;
   onChange: (n: number) => void;
+  /** When adv/dis is on, quantity is forced to 2 and the steppers grey out. */
+  rollMode: RollMode;
 }
 
 const QUANTITY_MIN = 1;
 const QUANTITY_MAX = 20;
 
-function QuantityPill({ diceType, quantity, onChange }: QuantityPillProps) {
+function QuantityPill({
+  diceType,
+  quantity,
+  onChange,
+  rollMode,
+}: QuantityPillProps) {
+  // adv/dis forces qty=2 regardless of stepper value — we show that here so
+  // the displayed math matches the throw the user is about to fire.
+  const locked = rollMode !== 'normal';
+  const displayQty = locked ? 2 : quantity;
   const dec = () => onChange(Math.max(QUANTITY_MIN, quantity - 1));
   const inc = () => onChange(Math.min(QUANTITY_MAX, quantity + 1));
   return (
     <div
-      className="self-center flex items-center gap-2 px-3 py-1.5 rounded-full"
+      className="self-center flex items-center gap-2 px-3 py-1.5 rounded-full transition-opacity duration-150"
       role="group"
-      aria-label={`Quantity, ${quantity} ${diceType.toUpperCase()}`}
+      aria-label={
+        locked
+          ? `Quantity locked at 2 for ${rollMode}`
+          : `Quantity, ${quantity} ${diceType.toUpperCase()}`
+      }
       style={{
         background: PILL_SURFACE_GRADIENT,
         border:
           '1px solid color-mix(in srgb, var(--color-gold) 50%, transparent)',
+        opacity: locked ? 0.55 : 1,
       }}
     >
       <PillStepper
         label="Decrease quantity"
         symbol="−"
         onClick={dec}
-        disabled={quantity <= QUANTITY_MIN}
+        disabled={locked || quantity <= QUANTITY_MIN}
       />
       <span
         className="text-xs uppercase tracking-[0.2em] text-gold/70 tabular-nums"
         aria-live="polite"
       >
-        {quantity} × {diceType.toUpperCase()}
+        {displayQty} × {diceType.toUpperCase()}
       </span>
       <PillStepper
         label="Increase quantity"
         symbol="+"
         onClick={inc}
-        disabled={quantity >= QUANTITY_MAX}
+        disabled={locked || quantity >= QUANTITY_MAX}
       />
     </div>
+  );
+}
+
+interface AdvantagePillProps {
+  value: RollMode;
+  onChange: (m: RollMode) => void;
+}
+
+/**
+ * Single-tap cycle: Normal → Advantage → Disadvantage → Normal.
+ * Cycling rather than a 3-button segmented control because the pill row
+ * is already crowded on narrow screens and most D&D rolls only need to
+ * flick between Normal and Advantage anyway. The danger-coloured
+ * Disadvantage state is the third tap so it's never reached by accident.
+ */
+function AdvantagePill({ value, onChange }: AdvantagePillProps) {
+  const cycle = () => {
+    const next: RollMode =
+      value === 'normal'
+        ? 'advantage'
+        : value === 'advantage'
+          ? 'disadvantage'
+          : 'normal';
+    onChange(next);
+  };
+  const isAdv = value === 'advantage';
+  const isDis = value === 'disadvantage';
+  const isActive = isAdv || isDis;
+  const accent = isDis ? 'var(--color-danger)' : 'var(--color-gold)';
+  const ariaLabel = isAdv
+    ? 'Roll mode: advantage. Tap to switch to disadvantage.'
+    : isDis
+      ? 'Roll mode: disadvantage. Tap to return to normal.'
+      : 'Roll mode: normal. Tap to enable advantage.';
+  const label = isAdv ? 'Adv ↑' : isDis ? 'Dis ↓' : 'Normal';
+  return (
+    <button
+      type="button"
+      onClick={cycle}
+      aria-label={ariaLabel}
+      aria-live="polite"
+      className="relative px-3.5 py-1.5 rounded-full transition-all duration-150 active:scale-95 before:absolute before:-inset-2 before:content-['']"
+      style={{
+        background: PILL_SURFACE_GRADIENT,
+        border: `1px solid color-mix(in srgb, ${accent} ${
+          isActive ? 85 : 35
+        }%, transparent)`,
+        boxShadow: isActive
+          ? `0 0 12px color-mix(in srgb, ${accent} 25%, transparent)`
+          : undefined,
+      }}
+    >
+      <span
+        className="text-xs uppercase tracking-[0.2em] tabular-nums"
+        style={{
+          color: isActive
+            ? accent
+            : 'color-mix(in srgb, var(--color-gold) 60%, transparent)',
+        }}
+      >
+        {label}
+      </span>
+    </button>
   );
 }
 

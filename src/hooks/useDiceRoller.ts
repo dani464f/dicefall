@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { rollDice } from '../lib/dice';
-import type { DiceType, RollResult } from '../types/dice';
+import { applyRollMode, rollDice } from '../lib/dice';
+import type { DiceType, RollMode, RollResult } from '../types/dice';
 
 export const ROLL_ANIMATION_MS = 1500;
 
@@ -48,9 +48,14 @@ export function useDiceRoller() {
   //      WASM fails to load — every die type now has a working physics
   //      face-read, so the RNG is a fallback rather than a primary path). ----
   const roll = useCallback(
-    (diceType: DiceType, quantity: number, modifier: number): RollResult => {
+    (
+      diceType: DiceType,
+      quantity: number,
+      modifier: number,
+      rollMode: RollMode = 'normal',
+    ): RollResult => {
       clearTimer();
-      const result = rollDice(diceType, quantity, modifier);
+      const result = rollDice(diceType, quantity, modifier, rollMode);
       setLastRoll(result);
       setThrowRequest(null);
       pendingTokenRef.current = null;
@@ -69,14 +74,26 @@ export function useDiceRoller() {
   );
 
   // ---- Physics-driven path (D4/D6/D8/D10/D12/D20/D100 with hull) ----
+  // Advantage/disadvantage forces quantity=2 — the spec is "roll twice and
+  // take higher/lower," not "roll N times" — and the *throw* itself always
+  // matches that count so the physical scene matches the math.
   const throwDice = useCallback(
-    (diceType: DiceType, quantity: number): void => {
+    (
+      diceType: DiceType,
+      quantity: number,
+      rollMode: RollMode = 'normal',
+    ): void => {
       clearTimer();
+      const effectiveQty = rollMode === 'normal' ? quantity : 2;
       setIsRolling(true);
       setLastRoll(null);
       tokenRef.current += 1;
       pendingTokenRef.current = tokenRef.current;
-      setThrowRequest({ token: tokenRef.current, diceType, quantity });
+      setThrowRequest({
+        token: tokenRef.current,
+        diceType,
+        quantity: effectiveQty,
+      });
     },
     [clearTimer],
   );
@@ -87,6 +104,10 @@ export function useDiceRoller() {
    * matches `pendingTokenRef`, the result is stale (e.g. user hit Clear, or
    * fired a fresh throw before the previous one resolved) and we drop it
    * silently.
+   *
+   * `rollMode` reaches us through App's rollModeRef so it always reflects
+   * whatever the toggle was set to at *throw* time — switching the pill
+   * mid-roll doesn't retroactively change which die counts.
    */
   const commitPhysicsResult = useCallback(
     (
@@ -95,15 +116,17 @@ export function useDiceRoller() {
       individualResults: number[],
       modifier: number,
       token: number,
+      rollMode: RollMode = 'normal',
     ): RollResult | null => {
       if (pendingTokenRef.current !== token) return null;
       pendingTokenRef.current = null;
-      const subtotal = individualResults.reduce((a, b) => a + b, 0);
+      const subtotal = applyRollMode(individualResults, rollMode);
       const result: RollResult = {
         id: makeId(),
         diceType,
         quantity,
         modifier,
+        rollMode,
         individualResults,
         total: subtotal + modifier,
         timestamp: Date.now(),

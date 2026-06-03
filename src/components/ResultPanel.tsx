@@ -1,3 +1,4 @@
+import { applyRollMode } from '../lib/dice';
 import type { RollResult } from '../types/dice';
 
 interface ResultPanelProps {
@@ -9,18 +10,31 @@ interface ResultPanelProps {
  * Tavern result frame — dark translucent panel with thin gold border and
  * a serif RESULT / TOTAL split. Sits in the lower-middle of the overlay
  * stack so it doesn't compete with the dice in the tray.
+ *
+ * When the roll was made with advantage/disadvantage, the panel shows
+ * both rolled values with the kept die highlighted and a small badge
+ * indicating the mode.
  */
 export function ResultPanel({ result, isRolling }: ResultPanelProps) {
   if (!result || isRolling) {
     return null;
   }
 
-  const { individualResults, modifier, total } = result;
-  const subtotal = individualResults.reduce((a, b) => a + b, 0);
+  const { individualResults, modifier, total, rollMode } = result;
+  const mode = rollMode ?? 'normal';
+  const subtotal = applyRollMode(individualResults, mode);
   const hasModifier = modifier !== 0;
   const expression = hasModifier
     ? `${subtotal} ${modifier > 0 ? '+' : '−'} ${Math.abs(modifier)}`
     : `${subtotal}`;
+  // For adv/dis, mark which individual value the total came from so we
+  // can render it bright and the other one dimmed.
+  const keptIndex =
+    mode === 'advantage'
+      ? individualResults.indexOf(Math.max(...individualResults))
+      : mode === 'disadvantage'
+        ? individualResults.indexOf(Math.min(...individualResults))
+        : -1;
 
   return (
     <div
@@ -63,6 +77,58 @@ export function ResultPanel({ result, isRolling }: ResultPanelProps) {
           </p>
         </div>
       </div>
+      {mode !== 'normal' && (
+        <AdvantageDetail
+          mode={mode}
+          values={individualResults}
+          keptIndex={keptIndex}
+        />
+      )}
+    </div>
+  );
+}
+
+function AdvantageDetail({
+  mode,
+  values,
+  keptIndex,
+}: {
+  mode: 'advantage' | 'disadvantage';
+  values: number[];
+  keptIndex: number;
+}) {
+  const accent =
+    mode === 'disadvantage' ? 'var(--color-danger)' : 'var(--color-gold)';
+  const badge = mode === 'advantage' ? 'Adv ↑' : 'Dis ↓';
+  return (
+    <div className="mt-2 pt-2 border-t border-gold/15 flex items-center justify-center gap-3 flex-wrap">
+      <span
+        className="text-[9px] uppercase tracking-[0.25em] px-1.5 py-0.5 rounded"
+        style={{
+          color: accent,
+          border: `1px solid color-mix(in srgb, ${accent} 55%, transparent)`,
+        }}
+      >
+        {badge}
+      </span>
+      <span className="flex items-center gap-1.5">
+        {values.map((v, i) => (
+          <span
+            key={i}
+            className="font-display text-sm tabular-nums px-1.5"
+            style={{
+              color:
+                i === keptIndex
+                  ? accent
+                  : 'color-mix(in srgb, var(--color-ivory) 35%, transparent)',
+              textDecoration: i === keptIndex ? 'none' : 'line-through',
+              fontWeight: i === keptIndex ? 700 : 400,
+            }}
+          >
+            {v}
+          </span>
+        ))}
+      </span>
     </div>
   );
 }

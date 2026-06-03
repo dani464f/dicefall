@@ -20,10 +20,21 @@ export const DICE_FACES: Record<DiceType, number> = {
   d100: 100,
 };
 
+/**
+ * Roll mode — borrowed from D&D 5e.
+ *   'normal'        roll `quantity` dice, sum them
+ *   'advantage'     roll 2 dice, take the higher (quantity is forced to 2)
+ *   'disadvantage'  roll 2 dice, take the lower  (quantity is forced to 2)
+ * Persisted in stored shapes as optional so existing presets/history
+ * loaded from a previous build still parse cleanly.
+ */
+export type RollMode = 'normal' | 'advantage' | 'disadvantage';
+
 export interface RollSetup {
   diceType: DiceType;
   quantity: number;
   modifier: number;
+  rollMode?: RollMode;
 }
 
 export interface RollResult {
@@ -31,6 +42,7 @@ export interface RollResult {
   diceType: DiceType;
   quantity: number;
   modifier: number;
+  rollMode?: RollMode;
   individualResults: number[];
   total: number;
   timestamp: number;
@@ -42,6 +54,7 @@ export interface Preset {
   diceType: DiceType;
   quantity: number;
   modifier: number;
+  rollMode?: RollMode;
 }
 
 export interface Settings {
