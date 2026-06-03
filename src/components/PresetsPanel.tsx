@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Sheet } from './Sheet';
 import { formatDiceFormula } from '../lib/dice';
+import { tavernSurface } from '../lib/ui/tavernSurface';
 import type { Preset, RollSetup } from '../types/dice';
 
 interface PresetsPanelProps {
@@ -73,7 +74,7 @@ export function PresetsPanel({
         <ul className="flex flex-col gap-2">
           {presets.map((p) => (
             <li key={p.id}>
-              <div className="flex items-stretch rounded-xl bg-white/[0.03] border border-subtle hover:border-gold/30 transition-colors overflow-hidden">
+              <div className={`${tavernSurface({ interactive: true })} flex items-stretch overflow-hidden`}>
                 <button
                   type="button"
                   onClick={() => onLoad(p)}

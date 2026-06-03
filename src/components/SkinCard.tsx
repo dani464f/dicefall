@@ -1,3 +1,4 @@
+import { tavernSurface } from '../lib/ui/tavernSurface';
 import type { Skin } from '../types/skins';
 
 interface SkinCardProps {
@@ -25,7 +26,7 @@ export function SkinCard({
 
   return (
     <div
-      className="flex items-stretch rounded-xl border border-subtle bg-white/[0.03] overflow-hidden"
+      className={`${tavernSurface()} flex items-stretch overflow-hidden`}
       style={
         isEquipped
           ? {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
 import { formatDiceFormula } from '../lib/dice';
+import { tavernSurface } from '../lib/ui/tavernSurface';
 import type { RollResult } from '../types/dice';
 
 interface RollHistoryProps {
@@ -23,7 +24,7 @@ export function RollHistory({ open, onClose, history, onClear }: RollHistoryProp
             {history.map((r) => (
               <li
                 key={r.id}
-                className="rounded-xl bg-white/[0.03] border border-subtle px-4 py-3"
+                className={`${tavernSurface()} px-4 py-3`}
               >
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="font-display text-sm text-secondary tabular-nums">

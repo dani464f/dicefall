@@ -1,4 +1,5 @@
 import { Sheet } from './Sheet';
+import { tavernSurface } from '../lib/ui/tavernSurface';
 import type { Settings } from '../types/dice';
 
 interface SettingsPanelProps {
@@ -83,7 +84,7 @@ function NavRow({ label, sublabel, onClick }: NavRowProps) {
     <button
       type="button"
       onClick={onClick}
-      className="w-full flex items-center justify-between gap-3 rounded-xl border border-subtle bg-white/[0.02] px-4 py-3 text-left hover:border-gold/30 transition-colors"
+      className={`${tavernSurface({ intensity: 'inner', interactive: true })} w-full flex items-center justify-between gap-3 px-4 py-3 text-left`}
     >
       <div className="min-w-0 flex-1">
         <p className="text-sm text-ivory font-medium">{label}</p>
@@ -126,7 +127,7 @@ function ToggleRow({
   return (
     <div
       className={
-        'flex items-center justify-between gap-3 rounded-xl border border-subtle bg-white/[0.02] px-4 py-3 ' +
+        `${tavernSurface({ intensity: 'inner' })} flex items-center justify-between gap-3 px-4 py-3 ` +
         (comingSoon ? 'opacity-50' : '')
       }
     >
@@ -186,7 +187,7 @@ function SegmentRow({
   onChange,
 }: SegmentRowProps) {
   return (
-    <div className="rounded-xl border border-subtle bg-white/[0.02] px-4 py-3">
+    <div className={`${tavernSurface({ intensity: 'inner' })} px-4 py-3`}>
       <p className="text-sm text-ivory font-medium">{label}</p>
       {sublabel && (
         <p className="text-xs text-secondary mt-0.5 mb-2">{sublabel}</p>
