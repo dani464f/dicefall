@@ -32,7 +32,15 @@
  *     visual.
  */
 
-const MIN_GAP_MS = 35;
+// Wood-hit throttle. Long enough to keep simultaneous floor impacts from
+// stacking into a wall-of-clacks, short enough that a multi-die spill
+// still reads as a busy shake.
+const CLACK_MIN_GAP_MS = 35;
+// Die-on-die has its own throttle (separate from the wood-hit one) so
+// rolling dice can both knock the table AND click against each other in
+// the same beat without one starving the other. The click is lighter and
+// shorter, so a smaller minimum gap works.
+const CLICK_MIN_GAP_MS = 20;
 // Doubled from 0.4 — the first pass mixed under speech volume; users
 // asked for it louder so it competes more with their tabletop ambience.
 const MASTER_GAIN = 0.8;
@@ -41,7 +49,8 @@ class DiceAudio {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private enabled = false;
-  private lastPlayAtMs = 0;
+  private lastClackAtMs = 0;
+  private lastClickAtMs = 0;
 
   /** Wire the Settings toggle through to here. Cheap; no side effects. */
   setEnabled(enabled: boolean): void {
@@ -85,15 +94,15 @@ class DiceAudio {
   }
 
   /**
-   * Play one dice clack. `intensity` ∈ (0, 1] scales volume and brightness
-   * so harder impacts sound sharper. Throttled — calls inside MIN_GAP_MS of
-   * the previous play are silently dropped.
+   * Wood hit — die hitting the tray floor or rail. Three components
+   * (transient + woody body + sub-thump). `intensity` ∈ (0, 1] scales
+   * volume and brightness. Throttled per CLACK_MIN_GAP_MS.
    */
   playClack(intensity = 1): void {
     if (!this.enabled || !this.ctx || !this.masterGain) return;
     const nowMs = this.ctx.currentTime * 1000;
-    if (nowMs - this.lastPlayAtMs < MIN_GAP_MS) return;
-    this.lastPlayAtMs = nowMs;
+    if (nowMs - this.lastClackAtMs < CLACK_MIN_GAP_MS) return;
+    this.lastClackAtMs = nowMs;
 
     const ctx = this.ctx;
     const t = ctx.currentTime;
@@ -156,6 +165,64 @@ class DiceAudio {
     sub.connect(subGain).connect(this.masterGain);
     sub.start(t);
     sub.stop(t + 0.09);
+  }
+
+  /**
+   * Die-on-die contact — two resin/bone surfaces clicking together.
+   * Deliberately quieter and shorter than playClack:
+   *   - higher centre frequency (3–4.5 kHz noise + ~700 Hz pip) so it
+   *     sits above the wood hits in the mix instead of competing with
+   *     them on the same frequency band;
+   *   - no sub-thump (these aren't floor impacts; they shouldn't move
+   *     air);
+   *   - master factor ~0.4× the clack so a busy roll has the wood hits
+   *     as the dominant beat and the inter-die clicks as a subtler
+   *     rattle underneath.
+   * Has its own throttle so it can interleave with wood hits.
+   */
+  playClick(intensity = 1): void {
+    if (!this.enabled || !this.ctx || !this.masterGain) return;
+    const nowMs = this.ctx.currentTime * 1000;
+    if (nowMs - this.lastClickAtMs < CLICK_MIN_GAP_MS) return;
+    this.lastClickAtMs = nowMs;
+
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const i = Math.min(1, Math.max(0.2, intensity));
+
+    // High-mid transient — the surface-on-surface tick.
+    const noiseBuf = makeNoiseBuffer(ctx, 0.035);
+    const noiseSrc = ctx.createBufferSource();
+    noiseSrc.buffer = noiseBuf;
+
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 3000 + Math.random() * 1500; // 3.0–4.5 kHz
+    bp.Q.value = 2.5 + i * 1.5;
+
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(i * 0.18, t);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, t + 0.035);
+
+    noiseSrc.connect(bp).connect(noiseGain).connect(this.masterGain);
+    noiseSrc.start(t);
+    noiseSrc.stop(t + 0.05);
+
+    // Brief mid-high pip — adds a hint of pitch to the noise burst so
+    // each click sounds like a small object rather than a hiss.
+    const pip = ctx.createOscillator();
+    pip.type = 'sine';
+    const pipFreq = 600 + Math.random() * 250; // 600–850 Hz
+    pip.frequency.setValueAtTime(pipFreq, t);
+    pip.frequency.exponentialRampToValueAtTime(pipFreq * 0.6, t + 0.03);
+
+    const pipGain = ctx.createGain();
+    pipGain.gain.setValueAtTime(i * 0.14, t);
+    pipGain.gain.exponentialRampToValueAtTime(0.001, t + 0.045);
+
+    pip.connect(pipGain).connect(this.masterGain);
+    pip.start(t);
+    pip.stop(t + 0.06);
   }
 }
 

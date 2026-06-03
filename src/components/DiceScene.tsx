@@ -171,7 +171,10 @@ type SettlementState =
 interface ThrowDie {
   mesh: THREE.Mesh;
   body: InstanceType<Rapier['RigidBody']>;
-  tick: () => void;
+  /** Called once per physics step. `siblings` is the full active-throw
+   *  list (including this die); used to classify impacts as die-on-die
+   *  vs floor/wall so the right audio voice plays. */
+  tick: (siblings: ThrowDie[]) => void;
   settlementState: () => SettlementState;
   /** Pop the die with a small vertical impulse + random torque. Returns
    *  false if no nudges remain. */
@@ -466,7 +469,7 @@ function buildScene(
     while (accumulator >= FIXED_DT && subSteps < MAX_SUBSTEPS) {
       if (physics) physics.world.step();
       if (activeThrow) {
-        for (const d of activeThrow.dice) d.tick();
+        for (const d of activeThrow.dice) d.tick(activeThrow.dice);
       }
       sceneTime += FIXED_DT;
       accumulator -= FIXED_DT;
@@ -728,7 +731,7 @@ function createThrowDie(
   return {
     mesh,
     body,
-    tick() {
+    tick(siblings) {
       const t = body.translation();
       const r = body.rotation();
       mesh.position.set(t.x, t.y, t.z);
@@ -740,27 +743,51 @@ function createThrowDie(
       const amag = Math.hypot(av.x, av.y, av.z);
 
       // Impact heuristic — fires on either of two clean signals:
-      //   (a) Vertical velocity sign flip from negative→positive while we
-      //       still have meaningful downward speed: that's a floor bounce.
-      //   (b) Large frame-over-frame speed loss (>35%) while moving fast:
-      //       that's a wall or die-on-die hit.
-      // `intensity` scales the clack with the impact magnitude so a light
-      // graze sounds different from a heavy land.
+      //   (a) Floor flip: y-velocity sign reversal while still falling fast.
+      //   (b) Lateral hit: >35 % frame-over-frame speed loss while moving.
+      // `impactStrength` scales the audio with the impact magnitude.
+      // `floorFlip` separately remembers whether THIS impact was a floor
+      // bounce; we use that below to skip the die-on-die classifier when
+      // the answer is already known (the floor is never another die).
       const HIT_MIN_SPEED = 1.0;
       const FLOOR_FLIP_THRESHOLD = -0.8;
       const SPEED_DROP_RATIO = 0.65;
       let impactStrength = 0;
+      let floorFlip = false;
       if (prevLvy < FLOOR_FLIP_THRESHOLD && lv.y > 0) {
-        // Floor bounce — intensity from how hard the die was falling.
         impactStrength = Math.min(1, -prevLvy / 5);
+        floorFlip = true;
       } else if (
         prevLinSpeed > HIT_MIN_SPEED &&
         lmag < prevLinSpeed * SPEED_DROP_RATIO
       ) {
-        // Side/dice impact — intensity from speed differential.
         impactStrength = Math.min(1, (prevLinSpeed - lmag) / 4);
       }
-      if (impactStrength > 0) diceAudio.playClack(impactStrength);
+      if (impactStrength > 0) {
+        // Classify floor/wall vs die-on-die by proximity to siblings.
+        // Floor bounces (signal (a)) are always wood; for lateral hits
+        // (signal (b)) we check whether another die was within ~2.4×
+        // bounding radius at impact time. Same-die comparison is
+        // skipped by identity check on the rigid-body reference.
+        let isDieOnDie = false;
+        if (!floorFlip && siblings.length > 1) {
+          const closeR = DIE_RADIUS[type] * 2.4;
+          const closeR2 = closeR * closeR;
+          for (const sib of siblings) {
+            if (sib.body === body) continue;
+            const st = sib.body.translation();
+            const dx = st.x - t.x;
+            const dy = st.y - t.y;
+            const dz = st.z - t.z;
+            if (dx * dx + dy * dy + dz * dz < closeR2) {
+              isDieOnDie = true;
+              break;
+            }
+          }
+        }
+        if (isDieOnDie) diceAudio.playClick(impactStrength);
+        else diceAudio.playClack(impactStrength);
+      }
       prevLinSpeed = lmag;
       prevLvy = lv.y;
 
