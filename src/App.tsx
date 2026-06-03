@@ -16,6 +16,7 @@ import { useDiceRoller } from './hooks/useDiceRoller';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { useSkinSystem } from './hooks/useSkinSystem';
 import { diceAudio } from './lib/audio/diceAudio';
+import { diceHaptics } from './lib/haptics/diceHaptics';
 import { isPhysicsDie } from './lib/faceDetection';
 import {
   DEFAULT_SETTINGS,
@@ -114,6 +115,14 @@ export default function App() {
     diceAudio.setEnabled(settings.soundEnabled);
   }, [settings.soundEnabled]);
 
+  // Same gate for haptics. navigator.vibrate() doesn't have an autoplay
+  // policy — once the user toggles it on, every impact in the scene can
+  // fire a pulse. Desktops without a motor and iOS (no API) silently
+  // no-op inside diceHaptics; nothing user-visible happens.
+  useEffect(() => {
+    diceHaptics.setEnabled(settings.hapticsEnabled);
+  }, [settings.hapticsEnabled]);
+
   const recordRoll = useCallback(
     (result: RollResult) => {
       setHistory((h) => [result, ...h].slice(0, HISTORY_MAX));
@@ -128,6 +137,10 @@ export default function App() {
     const usePhysics =
       isPhysicsDie(diceType) && !effectiveReducedMotion(settings);
     if (usePhysics) {
+      // Quantity-scaled whoosh so 1 die ≠ a fistful. Capped at qty/4 so
+      // a 6-die throw is still distinguishable from a 12-die throw
+      // without becoming a roar.
+      diceAudio.playWhoosh(Math.min(1, 0.4 + quantity * 0.12));
       throwDice(diceType, quantity);
     } else {
       const result = roll(diceType, quantity, profBonus);
@@ -170,6 +183,7 @@ export default function App() {
     const usePhysics =
       isPhysicsDie(preset.diceType) && !effectiveReducedMotion(settings);
     if (usePhysics) {
+      diceAudio.playWhoosh(Math.min(1, 0.4 + preset.quantity * 0.12));
       throwDice(preset.diceType, preset.quantity);
     } else {
       const result = roll(preset.diceType, preset.quantity, preset.modifier);

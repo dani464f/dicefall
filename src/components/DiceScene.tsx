@@ -16,6 +16,7 @@ import {
   type ResolvedSceneTheme,
 } from '../lib/skins/sceneResolver';
 import { diceAudio } from '../lib/audio/diceAudio';
+import { diceHaptics } from '../lib/haptics/diceHaptics';
 import type { ThrowRequest } from '../hooks/useDiceRoller';
 import type { SceneTheme } from '../types/skins';
 import { DICE_FACES, type DiceType, type RollResult } from '../types/dice';
@@ -785,8 +786,17 @@ function createThrowDie(
             }
           }
         }
-        if (isDieOnDie) diceAudio.playClick(impactStrength);
-        else diceAudio.playClack(impactStrength);
+        if (isDieOnDie) {
+          diceAudio.playClick(impactStrength);
+        } else {
+          diceAudio.playClack(impactStrength);
+          // Pair haptics to wood hits only — die-on-die contacts are
+          // too light and too frequent to feel right as buzzes (they'd
+          // smear into a continuous vibration). The diceHaptics module
+          // is gated by the Settings toggle and silently no-ops where
+          // the platform API isn't available.
+          diceHaptics.pulse(impactStrength);
+        }
       }
       prevLinSpeed = lmag;
       prevLvy = lv.y;

@@ -55,10 +55,9 @@ export function SettingsPanel({
         />
         <ToggleRow
           label="Haptics"
-          sublabel="Phone vibration on landing"
+          sublabel="Phone vibration on each dice impact"
           value={settings.hapticsEnabled}
           onChange={(v) => update({ hapticsEnabled: v })}
-          comingSoon
         />
 
         <p className="mt-4 text-xs text-secondary/60 leading-relaxed">

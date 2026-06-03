@@ -41,6 +41,11 @@ const CLACK_MIN_GAP_MS = 35;
 // the same beat without one starving the other. The click is lighter and
 // shorter, so a smaller minimum gap works.
 const CLICK_MIN_GAP_MS = 20;
+// The whoosh is the throw-air sound. One per throw is the only thing
+// that makes sense — back-to-back rolls would overlap into a smear if
+// we didn't space them out. Half a second is just past the perceptual
+// "this was one sound" boundary.
+const WHOOSH_MIN_GAP_MS = 500;
 // Doubled from 0.4 — the first pass mixed under speech volume; users
 // asked for it louder so it competes more with their tabletop ambience.
 const MASTER_GAIN = 0.8;
@@ -51,6 +56,7 @@ class DiceAudio {
   private enabled = false;
   private lastClackAtMs = 0;
   private lastClickAtMs = 0;
+  private lastWhooshAtMs = 0;
 
   /** Wire the Settings toggle through to here. Cheap; no side effects. */
   setEnabled(enabled: boolean): void {
@@ -223,6 +229,68 @@ class DiceAudio {
     pip.connect(pipGain).connect(this.masterGain);
     pip.start(t);
     pip.stop(t + 0.06);
+  }
+
+  /**
+   * Throw whoosh — the airborne phase between the user pressing Roll and
+   * the dice hitting the floor. A band-passed noise sweep from low-mid
+   * (~350 Hz) up to mid (~1.1 kHz) reads as "air moving past the ear" and
+   * sets up the impact sounds that follow without competing with them on
+   * the same frequency band.
+   *
+   * `intensity` is meant to scale with quantity-of-dice (1 die → 0.4,
+   * 6 dice → 1.0) so a fistful of D6s sounds like a fistful and a single
+   * D20 sounds like a single die. Throttled separately so back-to-back
+   * rolls don't smear into one whoosh.
+   */
+  playWhoosh(intensity = 1): void {
+    if (!this.enabled || !this.ctx || !this.masterGain) return;
+    const nowMs = this.ctx.currentTime * 1000;
+    if (nowMs - this.lastWhooshAtMs < WHOOSH_MIN_GAP_MS) return;
+    this.lastWhooshAtMs = nowMs;
+
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const i = Math.min(1, Math.max(0.3, intensity));
+    const duration = 0.4 + i * 0.15; // 400–550 ms covers the airborne phase
+
+    // Flat white noise (no internal fade — the gain envelope shapes it).
+    const buf = ctx.createBuffer(
+      1,
+      Math.max(1, Math.floor(ctx.sampleRate * duration)),
+      ctx.sampleRate,
+    );
+    const data = buf.getChannelData(0);
+    for (let j = 0; j < data.length; j++) data[j] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+
+    // Highpass first to lop off the sub-rumble noise contributes by
+    // default — without this the whoosh muddies the mix with woofer
+    // grunt on bigger speakers.
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 200;
+
+    // Band-pass sweep low→mid. The motion of the centre frequency is what
+    // makes the brain hear "something rushed past me" instead of "noise".
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(350, t);
+    bp.frequency.exponentialRampToValueAtTime(1100, t + duration * 0.8);
+    bp.Q.value = 0.7;
+
+    const gain = ctx.createGain();
+    // Gentle fade-in so the whoosh blooms rather than clicks on; longer
+    // tail so it sits under the first dice impact instead of vanishing
+    // before contact.
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(i * 0.16, t + 0.06);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+
+    src.connect(hp).connect(bp).connect(gain).connect(this.masterGain);
+    src.start(t);
+    src.stop(t + duration + 0.02);
   }
 }
 
