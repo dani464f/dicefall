@@ -61,10 +61,10 @@ export function SettingsPanel({
         />
 
         <p className="mt-4 text-xs text-secondary/60 leading-relaxed">
-          Rolls of D4 / D6 / D8 / D12 / D20 are decided by the physics —
-          the value shown is read from the upward face of the settled die.
-          D10 and D100 still use a fair random generator while their geometry
-          is finished.
+          Every die's result is decided by the physics — the value shown is
+          read from the upward face of the settled die. D10 and D100 share
+          a pentagonal-trapezohedron geometry; their opposite faces sum to
+          11 (D10) and 110 (D100), as on a real bone die.
         </p>
       </div>
     </Sheet>

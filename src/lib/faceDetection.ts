@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { DiceType } from '../types/dice';
-import { createPentagonalTrapezohedronGeometry } from './d10Geometry';
+import { getPentagonalTrapezohedronFaceNormals } from './d10Geometry';
 
 /**
  * After a die settles, we read which face is pointing "up" (or "down" for the
@@ -8,15 +8,17 @@ import { createPentagonalTrapezohedronGeometry } from './d10Geometry';
  * local frame and provides a quaternion → face-value lookup.
  *
  * Coverage:
- *   D6  — hand-coded (BoxGeometry, axis-aligned faces).
- *   D8  — hand-coded (OctahedronGeometry, ±xyz vertices).
- *   D12 — extracted from THREE.DodecahedronGeometry at module load.
- *   D20 — extracted from THREE.IcosahedronGeometry at module load.
- *   D4  — extracted from THREE.TetrahedronGeometry, read the *down* face
- *         (tetrahedrons rest on a face, the apex points up — convention is
- *          face-down value; trivial to flip later if you want a different rule).
- *   D10/D100 — no entry; callers should fall back to RNG until a real
- *              pentagonal-trapezohedron geometry lands.
+ *   D6     — hand-coded (BoxGeometry, axis-aligned faces).
+ *   D8     — hand-coded (OctahedronGeometry, ±xyz vertices).
+ *   D12    — extracted from THREE.DodecahedronGeometry at module load.
+ *   D20    — extracted from THREE.IcosahedronGeometry at module load.
+ *   D4     — extracted from THREE.TetrahedronGeometry, read the *down* face
+ *            (tetrahedrons rest on a face, the apex points up — convention is
+ *             face-down value; trivial to flip later if you want a different rule).
+ *   D10/D100 — hand-supplied kite centroid normals (see d10Geometry.ts).
+ *              The trapezohedron's kites are slightly non-planar so the
+ *              generic triangle-normal extractor would split each kite into
+ *              two "faces" and the read would alternate between two values.
  */
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -175,20 +177,24 @@ function buildFromGeometry(
 }
 
 function buildD10(): DieTable {
-  return buildFromGeometry(
-    createPentagonalTrapezohedronGeometry(1),
-    10,
-    'up',
-  );
+  // Source the 10 outward normals directly from the geometry module —
+  // see comment in d10Geometry.ts for why the generic extractor doesn't
+  // work for the non-planar kites this trapezohedron produces.
+  const flat = getPentagonalTrapezohedronFaceNormals();
+  const normals: THREE.Vector3[] = [];
+  for (let i = 0; i < 10; i++) {
+    normals.push(
+      new THREE.Vector3(flat[i * 3]!, flat[i * 3 + 1]!, flat[i * 3 + 2]!),
+    );
+  }
+  // labelFaces pairs antipodal normals and assigns 1↔10, 2↔9, …, 5↔6 —
+  // matches every standard D10's "opposite faces sum to 11" convention.
+  return { readDirection: 'up', faces: labelFaces(normals) };
 }
 
 function buildD100(): DieTable {
   // Same geometry as D10; each face value × 10 (10, 20, …, 100).
-  const base = buildFromGeometry(
-    createPentagonalTrapezohedronGeometry(1),
-    10,
-    'up',
-  );
+  const base = buildD10();
   return {
     readDirection: base.readDirection,
     faces: base.faces.map((f) => ({

@@ -924,7 +924,9 @@ const DIE_RADIUS: Record<DiceType, number> = {
 };
 
 // ===========================================================================
-// Legacy decorative dice (RNG path, kept for D10 / D100)
+// Legacy decorative dice (RNG path, kept as fallback when the reduced-
+// motion setting suppresses the physics throw or Rapier WASM fails to
+// load — every die type now has a real physics-read result by default).
 // ===========================================================================
 
 function createLegacyPhysicsDie(

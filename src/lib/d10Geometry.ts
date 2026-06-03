@@ -85,3 +85,76 @@ export function getPentagonalTrapezohedronVertices(
 ): Float32Array {
   return new Float32Array(buildPositions(radius));
 }
+
+/**
+ * Outward-pointing normal for each of the 10 kite faces, in geometry order:
+ * top kites i=0..4 first (around the polar axis, CCW from above), then
+ * bottom kites i=0..4. Used by face detection — see explanation below.
+ *
+ * The kite faces in this geometry are NOT planar. With our ratios
+ * (apex 1.0, belt-radius 0.66, belt-height 0.16) the four kite vertices
+ * sit ~6 % off coplanar, so the two triangles a kite gets sliced into
+ * have normals that disagree by ~10°.
+ *
+ * The generic face-normal extractor in faceDetection.ts dedupes triangle
+ * normals at `dot > 0.99`, which is too strict — each kite ends up as
+ * two separate "faces" instead of one. Without this helper, D10 reads
+ * its result from one of 20 entries (values 1–20) and the kite at top
+ * shows two different glyphs.
+ *
+ * The fix: define each face's normal as the unit vector from the die
+ * centre to the face's 4-vertex centroid. For a convex body centred
+ * at origin, that's the canonical outward normal anyway, and the
+ * triangle normals of either sub-triangle land near this direction
+ * (closest-match in dieFaceMaterials still maps both correctly).
+ */
+export function getPentagonalTrapezohedronFaceNormals(): Float32Array {
+  const apex = APEX_RATIO;
+  const r = BELT_RADIUS_RATIO;
+  const h = BELT_HEIGHT_RATIO;
+  const upper: Array<[number, number, number]> = [];
+  const lower: Array<[number, number, number]> = [];
+  for (let i = 0; i < 5; i++) {
+    const a = (i * 72) * (Math.PI / 180);
+    upper.push([r * Math.cos(a), h, r * Math.sin(a)]);
+  }
+  for (let i = 0; i < 5; i++) {
+    const a = (i * 72 + 36) * (Math.PI / 180);
+    lower.push([r * Math.cos(a), -h, r * Math.sin(a)]);
+  }
+  const TOP: [number, number, number] = [0, apex, 0];
+  const BOTTOM: [number, number, number] = [0, -apex, 0];
+
+  const out = new Float32Array(10 * 3);
+  let cursor = 0;
+  const pushCentroidUnit = (
+    a: [number, number, number],
+    b: [number, number, number],
+    c: [number, number, number],
+    d: [number, number, number],
+  ) => {
+    const cx = (a[0] + b[0] + c[0] + d[0]) / 4;
+    const cy = (a[1] + b[1] + c[1] + d[1]) / 4;
+    const cz = (a[2] + b[2] + c[2] + d[2]) / 4;
+    const m = Math.hypot(cx, cy, cz) || 1;
+    out[cursor++] = cx / m;
+    out[cursor++] = cy / m;
+    out[cursor++] = cz / m;
+  };
+
+  // Top kites: TOP + lower(i) + upper(i) + upper(i+1) — same vertex set the
+  // index buffer uses, just summed instead of split into two triangles.
+  for (let i = 0; i < 5; i++) {
+    pushCentroidUnit(TOP, lower[i]!, upper[i]!, upper[(i + 1) % 5]!);
+  }
+  // Bottom kites: BOTTOM + upper(i+1) + lower(i+1) + lower(i).
+  for (let i = 0; i < 5; i++) {
+    pushCentroidUnit(
+      BOTTOM,
+      upper[(i + 1) % 5]!,
+      lower[(i + 1) % 5]!,
+      lower[i]!,
+    );
+  }
+  return out;
+}

@@ -44,7 +44,9 @@ export function useDiceRoller() {
     }
   }, []);
 
-  // ---- Legacy RNG-driven path (dice types without face detection) ----
+  // ---- RNG-driven path (used when reduced-motion is on, or when Rapier
+  //      WASM fails to load — every die type now has a working physics
+  //      face-read, so the RNG is a fallback rather than a primary path). ----
   const roll = useCallback(
     (diceType: DiceType, quantity: number, modifier: number): RollResult => {
       clearTimer();
