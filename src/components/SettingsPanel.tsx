@@ -49,10 +49,9 @@ export function SettingsPanel({
         />
         <ToggleRow
           label="Sound"
-          sublabel="Click and clack when dice settle"
+          sublabel="Procedural clack on every dice impact"
           value={settings.soundEnabled}
           onChange={(v) => update({ soundEnabled: v })}
-          comingSoon
         />
         <ToggleRow
           label="Haptics"

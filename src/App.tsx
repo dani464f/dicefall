@@ -15,6 +15,7 @@ import { SkinSelector } from './components/SkinSelector';
 import { useDiceRoller } from './hooks/useDiceRoller';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { useSkinSystem } from './hooks/useSkinSystem';
+import { diceAudio } from './lib/audio/diceAudio';
 import { isPhysicsDie } from './lib/faceDetection';
 import {
   DEFAULT_SETTINGS,
@@ -105,6 +106,14 @@ export default function App() {
   // index.css disables every Tailwind transition + keyframe animation.
   useReducedMotionAttribute(effectiveReducedMotion(settings));
 
+  // Mirror the user's sound preference into the audio engine. The actual
+  // AudioContext init still has to wait for a user gesture (Roll button)
+  // because of the browser autoplay policy; this just gates whether
+  // playClack() does anything when impacts arrive.
+  useEffect(() => {
+    diceAudio.setEnabled(settings.soundEnabled);
+  }, [settings.soundEnabled]);
+
   const recordRoll = useCallback(
     (result: RollResult) => {
       setHistory((h) => [result, ...h].slice(0, HISTORY_MAX));
@@ -113,6 +122,9 @@ export default function App() {
   );
 
   const handleRoll = () => {
+    // Init audio inside the user-gesture handler — required by the
+    // browser autoplay policy. Safe no-op after the first call.
+    diceAudio.ensureInit();
     const usePhysics =
       isPhysicsDie(diceType) && !effectiveReducedMotion(settings);
     if (usePhysics) {
@@ -149,6 +161,8 @@ export default function App() {
   };
 
   const handleLoadPreset = (preset: Preset) => {
+    // Same gesture-bound init as handleRoll — loading a preset throws.
+    diceAudio.ensureInit();
     setDiceType(preset.diceType);
     setQuantity(preset.quantity);
     setProfBonus(preset.modifier);

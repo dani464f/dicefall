@@ -15,6 +15,7 @@ import {
   resolveSceneTheme,
   type ResolvedSceneTheme,
 } from '../lib/skins/sceneResolver';
+import { diceAudio } from '../lib/audio/diceAudio';
 import type { ThrowRequest } from '../hooks/useDiceRoller';
 import type { SceneTheme } from '../types/skins';
 import { DICE_FACES, type DiceType, type RollResult } from '../types/dice';
@@ -717,6 +718,12 @@ function createThrowDie(
 
   let settledFrames = 0;
   let nudgeAttempts = 0;
+  // Per-die impact detection state. We compare the speed *and* vertical
+  // velocity sign against the previous tick to decide when a hit just
+  // happened. The diceAudio module throttles globally, so it's fine for
+  // every die to call playClack() independently.
+  let prevLinSpeed = Math.hypot(lvx, lvy, lvz);
+  let prevLvy = lvy;
 
   return {
     mesh,
@@ -731,6 +738,32 @@ function createThrowDie(
       const av = body.angvel();
       const lmag = Math.hypot(lv.x, lv.y, lv.z);
       const amag = Math.hypot(av.x, av.y, av.z);
+
+      // Impact heuristic — fires on either of two clean signals:
+      //   (a) Vertical velocity sign flip from negative→positive while we
+      //       still have meaningful downward speed: that's a floor bounce.
+      //   (b) Large frame-over-frame speed loss (>35%) while moving fast:
+      //       that's a wall or die-on-die hit.
+      // `intensity` scales the clack with the impact magnitude so a light
+      // graze sounds different from a heavy land.
+      const HIT_MIN_SPEED = 1.0;
+      const FLOOR_FLIP_THRESHOLD = -0.8;
+      const SPEED_DROP_RATIO = 0.65;
+      let impactStrength = 0;
+      if (prevLvy < FLOOR_FLIP_THRESHOLD && lv.y > 0) {
+        // Floor bounce — intensity from how hard the die was falling.
+        impactStrength = Math.min(1, -prevLvy / 5);
+      } else if (
+        prevLinSpeed > HIT_MIN_SPEED &&
+        lmag < prevLinSpeed * SPEED_DROP_RATIO
+      ) {
+        // Side/dice impact — intensity from speed differential.
+        impactStrength = Math.min(1, (prevLinSpeed - lmag) / 4);
+      }
+      if (impactStrength > 0) diceAudio.playClack(impactStrength);
+      prevLinSpeed = lmag;
+      prevLvy = lv.y;
+
       // Per-die settle ceiling derived from bounding radius — D4/D20
       // resting on a face / leaning on a wall sit higher than D6 ever
       // does, so a single hand-tuned constant misclassified them as
