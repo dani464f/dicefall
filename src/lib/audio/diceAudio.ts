@@ -1,32 +1,41 @@
 /**
  * Procedural dice audio — no MP3/OGG assets. Web Audio API synthesises a
- * short two-component "clack" on demand:
+ * short three-component "clack" on demand, voiced for resin dice on a
+ * wooden tavern table rather than the bright plastic tick the first cut
+ * landed on:
  *
- *   1. A band-passed noise burst (~3 kHz) for the high-frequency tick that
- *      reads as bone or polished resin hitting wood.
- *   2. A short sine pulse (~110 Hz, falling) for the body thunk that gives
- *      the click weight without becoming a thump.
+ *   1. A damped noise burst centred at ~1.5 kHz for the corner-strike
+ *      transient. Low Q so it reads as a knock, not a chime.
+ *   2. A short falling sine at ~240 Hz for the body thunk — the woody
+ *      mid-range that gives the click weight.
+ *   3. A brief sub-thump at ~70 Hz so the impact has floor under it on
+ *      good speakers, but stays felt-not-heard on phones.
  *
  * Why procedural:
- *   The rest of the project paints dice faces / pips on canvas rather than
- *   shipping image assets, and audio assets have the same trade-offs (extra
- *   network request, license question, format fragmentation). A ~100-line
- *   synth gives us a satisfying clack and stays in the spirit of the codebase.
+ *   The rest of the project paints dice faces on canvas rather than
+ *   shipping image assets, and audio assets have the same trade-offs
+ *   (extra network request, license question, format fragmentation). A
+ *   ~100-line synth gives us a satisfying clack and stays in the spirit
+ *   of the codebase.
  *
  * Two browser constraints we have to respect:
  *
- *   - **Autoplay policy.** AudioContext starts in `suspended` state until a
- *     user gesture resumes it. `ensureInit()` must be called from inside a
- *     click / pointerdown / keydown handler (the Roll button qualifies).
+ *   - **Autoplay policy.** AudioContext starts in `suspended` state until
+ *     a user gesture resumes it. `ensureInit()` must be called from
+ *     inside a click / pointerdown / keydown handler (Roll button
+ *     qualifies).
  *
- *   - **Cost of many simultaneous notes.** Multiple dice hitting the floor
- *     in the same frame would spawn N short sources, none of them audibly
- *     distinct. We throttle to one clack per `MIN_GAP_MS`; rapid impacts
- *     just sound like a denser shake, which matches the visual.
+ *   - **Cost of many simultaneous notes.** Multiple dice hitting the
+ *     floor in the same frame would spawn N short sources, none of them
+ *     audibly distinct. We throttle to one clack per `MIN_GAP_MS`; rapid
+ *     impacts collapse to a denser-sounding shake, which matches the
+ *     visual.
  */
 
 const MIN_GAP_MS = 35;
-const MASTER_GAIN = 0.4;
+// Doubled from 0.4 — the first pass mixed under speech volume; users
+// asked for it louder so it competes more with their tabletop ambience.
+const MASTER_GAIN = 0.8;
 
 class DiceAudio {
   private ctx: AudioContext | null = null;
@@ -90,38 +99,63 @@ class DiceAudio {
     const t = ctx.currentTime;
     const i = Math.min(1, Math.max(0.2, intensity));
 
-    // --- High-frequency tick: filtered noise burst -----------------------
+    // --- Corner-strike transient: damped noise burst --------------------
+    // Lowered from ~3 kHz to ~1.5 kHz and Q from 4-8 to 1.5-3 so the click
+    // reads as a wood knock rather than a Lego stud snapping. Higher Q
+    // makes the burst ring like a plastic resonance — exactly what we want
+    // to avoid for tabletop dice.
     const noiseBuf = makeNoiseBuffer(ctx, 0.05);
     const noiseSrc = ctx.createBufferSource();
     noiseSrc.buffer = noiseBuf;
 
     const bp = ctx.createBiquadFilter();
     bp.type = 'bandpass';
-    bp.frequency.value = 2800 + Math.random() * 1200;
-    bp.Q.value = 4 + i * 4; // harder hits → brighter, narrower band
+    bp.frequency.value = 1200 + Math.random() * 700; // 1.2–1.9 kHz
+    bp.Q.value = 1.5 + i * 1.5;
 
     const noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(i * 0.55, t);
-    noiseGain.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+    noiseGain.gain.setValueAtTime(i * 0.38, t);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
 
     noiseSrc.connect(bp).connect(noiseGain).connect(this.masterGain);
     noiseSrc.start(t);
     noiseSrc.stop(t + 0.08);
 
-    // --- Low-frequency thunk: brief falling sine -------------------------
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    const baseFreq = 100 + Math.random() * 40;
-    osc.frequency.setValueAtTime(baseFreq, t);
-    osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.5, t + 0.05);
+    // --- Body thunk: mid-range woody resonance ---------------------------
+    // Lifted the base from ~110 Hz to ~240 Hz (mid-wood range — closer to
+    // a knock-on-table than a bass drum) and boosted gain so the body sits
+    // forward in the mix instead of letting the transient dominate.
+    const body = ctx.createOscillator();
+    body.type = 'triangle'; // a few subtle harmonics → reads as wood, not pure tone
+    const bodyFreq = 210 + Math.random() * 70; // 210–280 Hz
+    body.frequency.setValueAtTime(bodyFreq, t);
+    body.frequency.exponentialRampToValueAtTime(bodyFreq * 0.45, t + 0.06);
 
-    const oscGain = ctx.createGain();
-    oscGain.gain.setValueAtTime(i * 0.32, t);
-    oscGain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+    const bodyGain = ctx.createGain();
+    bodyGain.gain.setValueAtTime(i * 0.6, t);
+    bodyGain.gain.exponentialRampToValueAtTime(0.001, t + 0.11);
 
-    osc.connect(oscGain).connect(this.masterGain);
-    osc.start(t);
-    osc.stop(t + 0.08);
+    body.connect(bodyGain).connect(this.masterGain);
+    body.start(t);
+    body.stop(t + 0.12);
+
+    // --- Sub-thump: floor-impact felt-not-heard --------------------------
+    // Only fires meaningfully on harder hits (gain scales with intensity²).
+    // Adds physicality on speakers with bass response without muddying the
+    // mix on phone speakers, which roll this band off anyway.
+    const sub = ctx.createOscillator();
+    sub.type = 'sine';
+    const subFreq = 65 + Math.random() * 15;
+    sub.frequency.setValueAtTime(subFreq, t);
+    sub.frequency.exponentialRampToValueAtTime(subFreq * 0.7, t + 0.06);
+
+    const subGain = ctx.createGain();
+    subGain.gain.setValueAtTime(i * i * 0.45, t);
+    subGain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+
+    sub.connect(subGain).connect(this.masterGain);
+    sub.start(t);
+    sub.stop(t + 0.09);
   }
 }
 
