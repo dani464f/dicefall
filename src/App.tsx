@@ -280,7 +280,19 @@ export default function App() {
       >
         <div className="mx-auto w-full max-w-md flex flex-col gap-2.5">
           <ResultPanel result={lastRoll} isRolling={isRolling} />
-          <DiceSelector selected={diceType} onSelect={setDiceType} />
+          <DiceSelector
+            selected={diceType}
+            onSelect={(dt) => {
+              setDiceType(dt);
+              // Reset quantity on every die-type change. Carrying 6× from a
+              // D6 throw into a D20 selection means "I want to roll 6 D20s"
+              // — usually not what the user meant. A fresh single die per
+              // selection is the safer default; the user re-bumps the
+              // stepper if they actually want a pool. Presets carry their
+              // own quantity, so this only fires for manual selector taps.
+              if (dt !== diceType) setQuantity(DEFAULT_QUANTITY);
+            }}
+          />
           <div className="flex items-center justify-center flex-wrap gap-2">
             <QuantityPill
               diceType={diceType}
