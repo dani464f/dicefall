@@ -38,12 +38,16 @@ const tavernClassic: Skin = {
     surfaceWarm: '#3a2a1f',
     primaryText: '#f4e8d0',
     secondaryText: '#b8aa91',
-    accent: '#c9a45c',
-    accentSoft: '#b08f4d',
+    // B1 refinement: gold ramp nudged half a step toward antique brass
+    // (warmer, less candy-yellow). Mirrors the @theme defaults in
+    // index.css so both the static stylesheet and the applyUiTheme()
+    // runtime path agree. Obsidian & Arcane palettes are untouched.
+    accent: '#c19a55',
+    accentSoft: '#a8884a',
     danger: '#a6413b',
     special: '#6f8cff',
     border: 'rgba(255, 255, 255, 0.08)',
-    button: '#c9a45c',
+    button: '#c19a55',
     buttonText: '#1b120d',
   },
   sceneTheme: {

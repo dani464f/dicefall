@@ -234,34 +234,38 @@ export default function App() {
         />
       </Suspense>
 
-      {/* Vignette over the scene for cinematic edges */}
+      {/* Vignette over the scene for cinematic edges. B1: edge weight
+          reduced from rgba(0,0,0,0.55) to var(--vignette-edge) (0.35) so
+          the tavern walls breathe — still framed, not boxed-in. */}
       <div
         aria-hidden
         className="absolute inset-0 pointer-events-none"
         style={{
           background:
-            'radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.55) 100%)',
+            'radial-gradient(ellipse at center, transparent 48%, var(--vignette-edge) 100%)',
         }}
       />
 
-      {/* Top bar */}
+      {/* Top bar — B1: title tracking eased from 0.4em to 0.32em, glow
+          dialed back from 40% → 25%; the gradient scrim fades sooner so
+          the underlying tavern wall is visible behind the title. */}
       <header
         className="absolute top-0 left-0 right-0 flex items-center justify-between px-5"
         style={{
           paddingTop: 'max(env(safe-area-inset-top), 0.75rem)',
           paddingBottom: '0.5rem',
           background:
-            'linear-gradient(180deg, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0) 100%)',
+            'linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 100%)',
         }}
       >
         <CircleButton label="Recent rolls" onClick={() => setOpenSheet('history')}>
           <HamburgerIcon />
         </CircleButton>
         <h1
-          className="font-display text-xl text-gold uppercase tracking-[0.4em]"
+          className="font-display text-xl text-gold uppercase tracking-[0.32em]"
           style={{
             textShadow:
-              '0 0 14px color-mix(in srgb, var(--color-gold) 40%, transparent)',
+              '0 0 12px color-mix(in srgb, var(--color-gold) 25%, transparent)',
           }}
         >
           Tavern
@@ -400,7 +404,7 @@ function QuantityPill({
       style={{
         background: PILL_SURFACE_GRADIENT,
         border:
-          '1px solid color-mix(in srgb, var(--color-gold) 50%, transparent)',
+          '1px solid color-mix(in srgb, var(--color-gold) 35%, transparent)',
         opacity: locked ? 0.55 : 1,
       }}
     >
@@ -411,7 +415,7 @@ function QuantityPill({
         disabled={locked || quantity <= QUANTITY_MIN}
       />
       <span
-        className="text-xs uppercase tracking-[0.2em] text-gold/70 tabular-nums"
+        className="text-2xs uppercase tracking-[0.22em] text-gold/75 tabular-nums"
         aria-live="polite"
       >
         {displayQty} × {diceType.toUpperCase()}
@@ -468,19 +472,19 @@ function AdvantagePill({ value, onChange }: AdvantagePillProps) {
       style={{
         background: PILL_SURFACE_GRADIENT,
         border: `1px solid color-mix(in srgb, ${accent} ${
-          isActive ? 85 : 35
+          isActive ? 70 : 28
         }%, transparent)`,
         boxShadow: isActive
-          ? `0 0 12px color-mix(in srgb, ${accent} 25%, transparent)`
+          ? `0 0 8px color-mix(in srgb, ${accent} 18%, transparent)`
           : undefined,
       }}
     >
       <span
-        className="text-xs uppercase tracking-[0.2em] tabular-nums"
+        className="text-2xs uppercase tracking-[0.22em] tabular-nums"
         style={{
           color: isActive
             ? accent
-            : 'color-mix(in srgb, var(--color-gold) 60%, transparent)',
+            : 'color-mix(in srgb, var(--color-gold) 65%, transparent)',
         }}
       >
         {label}
@@ -509,10 +513,10 @@ function ProfBonusPill({ value, min, max, onChange }: ProfBonusPillProps) {
       style={{
         background: PILL_SURFACE_GRADIENT,
         border: `1px solid color-mix(in srgb, var(--color-gold) ${
-          active ? 85 : 35
+          active ? 65 : 28
         }%, transparent)`,
         boxShadow: active
-          ? '0 0 12px color-mix(in srgb, var(--color-gold) 20%, transparent)'
+          ? '0 0 8px color-mix(in srgb, var(--color-gold) 14%, transparent)'
           : undefined,
       }}
     >
@@ -523,7 +527,7 @@ function ProfBonusPill({ value, min, max, onChange }: ProfBonusPillProps) {
         disabled={value <= min}
       />
       <span
-        className="text-xs uppercase tracking-[0.2em] text-gold/85 tabular-nums"
+        className="text-2xs uppercase tracking-[0.22em] text-gold/85 tabular-nums"
         title="Proficiency bonus added to every roll"
         aria-live="polite"
       >
@@ -579,19 +583,24 @@ function RollButton({ onClick, disabled, rolling }: RollButtonProps) {
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="relative w-full rounded-2xl py-3.5 transition-all duration-100 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
+      className="relative w-full rounded-2xl py-3 transition-all duration-100 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
       style={{
         // Three-stop gold gradient derived from --color-gold so a cool-palette
         // skin (Obsidian Court) gets a sapphire-leaning button automatically.
+        //
+        // B1 refinement: highlight pulled from 30% white → 18% so the cap
+        // reads as warm brass rather than shiny chrome; bottom darkened
+        // less aggressively (35% → 28%); outer shadow halved
+        // (0 8px 24px /0.55 → 0 4px 14px /0.4) — same energy, less weight.
         background:
-          'linear-gradient(180deg, color-mix(in srgb, var(--color-gold) 70%, white 30%) 0%, var(--color-gold) 45%, color-mix(in srgb, var(--color-gold) 65%, black 35%) 100%)',
-        border: '1px solid rgba(0,0,0,0.55)',
+          'linear-gradient(180deg, color-mix(in srgb, var(--color-gold) 82%, white 18%) 0%, var(--color-gold) 45%, color-mix(in srgb, var(--color-gold) 72%, black 28%) 100%)',
+        border: '1px solid rgba(0,0,0,0.45)',
         boxShadow:
-          '0 8px 24px rgba(0,0,0,0.55), inset 0 1px 0 color-mix(in srgb, var(--color-gold) 30%, white 70%), inset 0 -2px 4px rgba(0,0,0,0.4)',
+          '0 4px 14px rgba(0,0,0,0.4), inset 0 1px 0 color-mix(in srgb, var(--color-gold) 30%, white 70%), inset 0 -1px 2px rgba(0,0,0,0.32)',
       }}
     >
       <span
-        className="block font-display text-2xl uppercase tracking-[0.45em] leading-none"
+        className="block font-display text-2xl uppercase tracking-[0.4em] leading-none"
         style={{
           color: 'var(--color-tray-deep)',
           textShadow:
@@ -601,9 +610,9 @@ function RollButton({ onClick, disabled, rolling }: RollButtonProps) {
         {rolling ? 'Rolling' : 'Roll'}
       </span>
       <span
-        className="block text-[9px] uppercase tracking-[0.4em] mt-1"
+        className="block text-2xs uppercase tracking-[0.32em] mt-1"
         style={{
-          color: 'color-mix(in srgb, var(--color-tray-deep) 65%, transparent)',
+          color: 'color-mix(in srgb, var(--color-tray-deep) 60%, transparent)',
         }}
       >
         Tap to roll
@@ -621,13 +630,13 @@ interface BottomNavProps {
 
 function BottomNav({ hasResult, onClear, onHistory, onSettings }: BottomNavProps) {
   return (
-    <div className="flex items-center justify-between pt-1">
+    <div className="flex items-center justify-between pt-2">
       <NavItem icon={<ClockIcon />} label="History" onClick={onHistory} />
       {hasResult ? (
         <button
           type="button"
           onClick={onClear}
-          className="text-[10px] uppercase tracking-[0.3em] text-secondary/70 hover:text-gold transition-colors"
+          className="text-2xs uppercase tracking-[0.28em] text-secondary/70 hover:text-gold transition-colors"
         >
           Clear tray
         </button>
@@ -650,12 +659,20 @@ function NavItem({ icon, label, onClick }: NavItemProps) {
     <button
       type="button"
       onClick={onClick}
-      className="flex flex-col items-center gap-0.5 text-secondary/80 hover:text-gold transition-colors"
+      className="flex flex-col items-center gap-1 text-secondary/85 hover:text-gold transition-colors"
     >
-      <span className="w-9 h-9 rounded-full border border-gold/35 flex items-center justify-center">
+      <span
+        className="w-10 h-10 rounded-full flex items-center justify-center transition-colors"
+        style={{
+          border:
+            '1px solid color-mix(in srgb, var(--color-gold) 28%, transparent)',
+          background:
+            'color-mix(in srgb, var(--color-tray-deep) 35%, transparent)',
+        }}
+      >
         {icon}
       </span>
-      <span className="text-[9px] uppercase tracking-[0.3em]">{label}</span>
+      <span className="text-2xs uppercase tracking-[0.28em]">{label}</span>
     </button>
   );
 }
@@ -675,9 +692,9 @@ function CircleButton({ label, onClick, children }: CircleButtonProps) {
       className="relative w-11 h-11 rounded-full flex items-center justify-center text-gold/85 hover:text-gold transition-colors"
       style={{
         background:
-          'color-mix(in srgb, var(--color-tray-deep) 55%, transparent)',
+          'color-mix(in srgb, var(--color-tray-deep) 50%, transparent)',
         border:
-          '1px solid color-mix(in srgb, var(--color-gold) 45%, transparent)',
+          '1px solid color-mix(in srgb, var(--color-gold) 32%, transparent)',
       }}
     >
       {children}

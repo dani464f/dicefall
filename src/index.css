@@ -3,14 +3,22 @@
 /* The active skin writes these same custom properties at runtime via
  * applyUiTheme(); every other component reads them through Tailwind
  * utilities like `bg-bg` / `text-gold` / `border-subtle`. Keep the
- * defaults here in sync with `tavernClassic` in skinRegistry.ts.        */
+ * defaults here in sync with `tavernClassic` in skinRegistry.ts.
+ *
+ * B1 refinement: gold defaults are nudged half a step toward antique
+ * brass (warmer, less yellow); a real type ramp, 4px spacing scale,
+ * elevation shadows, and ornament/vignette tokens are introduced so
+ * components can stop hand-rolling px values. Skin-pinned color slots
+ * (background, surface, accent, etc.) only fall back to these defaults
+ * for the Tavern skin — Obsidian and Arcane override them at runtime
+ * and are unaffected by the tonal nudge.                                */
 @theme {
   --color-bg: #101014;
   --color-tray: #2a1d16;
   --color-tray-deep: #1b120d;
   --color-tray-warm: #3a2a1f;
-  --color-gold: #c9a45c;
-  --color-gold-soft: #b08f4d;
+  --color-gold: #c19a55;
+  --color-gold-soft: #a8884a;
   --color-ivory: #f4e8d0;
   --color-secondary: #b8aa91;
   --color-subtle: rgba(255, 255, 255, 0.08);
@@ -19,6 +27,54 @@
 
   --font-display: "Cormorant Garamond", Georgia, "Times New Roman", serif;
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Type scale (px values mapped to rem so they survive root-size shifts).
+   * Use these in component styles via the matching --text-* var or the
+   * generated Tailwind utility text-xs / text-sm / text-base / text-lg
+   * / text-xl / text-2xl / text-3xl / text-4xl. The micro tier (--text-2xs)
+   * replaces the 10px / 9px one-offs that were sprinkled across pill
+   * captions and nav labels. */
+  --text-2xs: 0.625rem;   /* 10px — micro caps for nav captions / badges */
+  --text-xs: 0.75rem;     /* 12px — small UI labels, pill captions      */
+  --text-sm: 0.875rem;    /* 14px — secondary body, list metadata       */
+  --text-base: 1rem;      /* 16px — primary body                        */
+  --text-lg: 1.125rem;    /* 18px — sheet/section titles                */
+  --text-xl: 1.375rem;    /* 22px — H1 in top bar                       */
+  --text-2xl: 1.75rem;    /* 28px — result expression, history totals   */
+  --text-3xl: 2.25rem;    /* 36px — result total, big numerals          */
+  --text-4xl: 2.75rem;    /* 44px — reserved for future hero numerals   */
+
+  /* 4px spacing grid. Components prefer these over ad-hoc px-[7px]
+   * one-offs. Tailwind utilities like p-1 / gap-2 / px-3 still work and
+   * map to the same rem values; declaring them here lets us tweak the
+   * grid in one place if we ever shift to 5px or 6px. */
+  --space-1: 0.25rem;     /* 4px  */
+  --space-1-5: 0.375rem;  /* 6px  — intermediate, sparingly */
+  --space-2: 0.5rem;      /* 8px  */
+  --space-3: 0.75rem;     /* 12px */
+  --space-4: 1rem;        /* 16px */
+  --space-5: 1.25rem;     /* 20px */
+  --space-6: 1.5rem;      /* 24px */
+  --space-8: 2rem;        /* 32px */
+
+  /* Elevation shadows — refined down from the prior heavy
+   * `0 8px 24px rgba(0,0,0,0.55)` blocks. The three tiers are:
+   *  - card:  list rows / static cards, just a touch of separation
+   *  - panel: framed surfaces (ResultPanel, DiceSelector) — feels lifted
+   *  - lift:  the Roll button and the Sheet drawer, the heaviest tier */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-panel: 0 4px 16px rgba(0, 0, 0, 0.42), inset 0 0 8px rgba(0, 0, 0, 0.3);
+  --shadow-lift: 0 4px 14px rgba(0, 0, 0, 0.4);
+
+  /* Ornament + atmosphere intensities. Components reference these so a
+   * single value tweak ripples to every flourish without grepping every
+   * file. `--ornament-opacity` drives corner/divider flourishes;
+   * `--vignette-edge` drives the radial overlay in App.tsx. The brief
+   * called for ~30–50% weight reduction; vignette drops from 0.55 to
+   * 0.35 (~36%), ornaments hold at 0.65 since they're already restrained
+   * but can be dialed via the var if the preview reads too soft. */
+  --ornament-opacity: 0.65;
+  --vignette-edge: rgba(0, 0, 0, 0.35);
 }
 
 html,

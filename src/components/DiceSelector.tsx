@@ -1,4 +1,5 @@
 import { useRef, type KeyboardEvent } from 'react';
+import { tavernPanelStyle } from '../lib/ui/tavernSurface';
 import { ALL_DICE, type DiceType } from '../types/dice';
 
 interface DiceSelectorProps {
@@ -52,14 +53,7 @@ export function DiceSelector({ selected, onSelect }: DiceSelectorProps) {
       role="radiogroup"
       aria-label="Die type"
       className="relative flex items-stretch w-full overflow-hidden"
-      style={{
-        background:
-          'linear-gradient(180deg, color-mix(in srgb, var(--color-tray-deep) 72%, transparent) 0%, color-mix(in srgb, var(--color-tray-deep) 82%, transparent) 100%)',
-        border:
-          '1px solid color-mix(in srgb, var(--color-gold) 35%, transparent)',
-        borderRadius: '10px',
-        boxShadow: 'inset 0 0 18px rgba(0,0,0,0.6)',
-      }}
+      style={tavernPanelStyle({ tone: 'inset' })}
     >
       {ALL_DICE.map((d, idx) => {
         const isActive = d === selected;
@@ -75,16 +69,16 @@ export function DiceSelector({ selected, onSelect }: DiceSelectorProps) {
             onClick={() => onSelect(d)}
             onKeyDown={onKeyDown}
             className={
-              'relative flex-1 flex flex-col items-center justify-center py-2 transition-all duration-150 active:scale-95 ' +
+              'relative flex-1 flex flex-col items-center justify-center gap-0.5 py-2 transition-all duration-150 active:scale-95 ' +
               (isActive ? 'text-gold' : 'text-secondary hover:text-ivory')
             }
             style={
               isActive
                 ? {
                     background:
-                      'radial-gradient(ellipse at center, color-mix(in srgb, var(--color-gold) 18%, transparent) 0%, transparent 70%)',
+                      'radial-gradient(ellipse at center, color-mix(in srgb, var(--color-gold) 12%, transparent) 0%, transparent 72%)',
                     textShadow:
-                      '0 0 10px color-mix(in srgb, var(--color-gold) 55%, transparent)',
+                      '0 0 8px color-mix(in srgb, var(--color-gold) 40%, transparent)',
                   }
                 : undefined
             }
@@ -92,21 +86,26 @@ export function DiceSelector({ selected, onSelect }: DiceSelectorProps) {
             {idx > 0 && (
               <span
                 aria-hidden
-                className="absolute left-0 top-2 bottom-2 w-px bg-gold/25"
+                className="absolute left-0 top-2.5 bottom-2.5 w-px"
+                style={{
+                  background:
+                    'color-mix(in srgb, var(--color-gold) 18%, transparent)',
+                }}
               />
             )}
             <DieGlyph type={d} active={isActive} />
-            <span className="text-[10px] uppercase tracking-wider font-semibold mt-0.5">
+            <span className="text-2xs uppercase tracking-[0.18em] font-semibold tabular-nums">
               {d.toUpperCase()}
             </span>
             {isActive && (
               <span
                 aria-hidden
-                className="absolute inset-x-2 -bottom-px h-[2px] rounded-full"
+                className="absolute inset-x-3 -bottom-px h-px rounded-full"
                 style={{
                   background:
                     'linear-gradient(90deg, transparent 0%, var(--color-gold) 50%, transparent 100%)',
-                  boxShadow: '0 0 8px var(--color-gold)',
+                  boxShadow:
+                    '0 0 6px color-mix(in srgb, var(--color-gold) 70%, transparent)',
                 }}
               />
             )}
@@ -120,8 +119,17 @@ export function DiceSelector({ selected, onSelect }: DiceSelectorProps) {
 function DieGlyph({ type, active }: { type: DiceType; active: boolean }) {
   // Minimal "dice silhouette" per type. Just gives the row a visual cue
   // beyond text — full custom SVGs per die are polish for later.
-  const stroke = active ? '#d4af6b' : '#8a7e69';
-  const fill = active ? 'rgba(201,164,92,0.12)' : 'transparent';
+  //
+  // Skin-aware: derives both stroke + fill from the active palette so
+  // Obsidian (sapphire) and Arcane (emerald) recolor automatically.
+  // Previous hardcoded `#d4af6b / #8a7e69` left a brown tint in the
+  // selector under any non-Tavern skin.
+  const stroke = active
+    ? 'color-mix(in srgb, var(--color-gold) 88%, white 12%)'
+    : 'color-mix(in srgb, var(--color-secondary) 75%, transparent)';
+  const fill = active
+    ? 'color-mix(in srgb, var(--color-gold) 12%, transparent)'
+    : 'transparent';
   switch (type) {
     case 'd4':
       return (

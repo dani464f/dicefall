@@ -100,12 +100,13 @@ export function Sheet({ open, onClose, title, children }: SheetProps) {
     >
       {/* Backdrop: presentational div, NOT a tabbable button. Clicking
           dismisses the sheet but Tab does not land here, so aria-modal
-          keeps focus contained inside the dialog. */}
+          keeps focus contained inside the dialog. B1: dimmed from /65
+          to /55 so the underlying tavern scene still reads through. */}
       <div
         onClick={onClose}
         aria-hidden
         className={
-          'absolute inset-0 bg-black/65 transition-opacity duration-300 ease-out ' +
+          'absolute inset-0 bg-black/55 transition-opacity duration-300 ease-out ' +
           (open ? 'opacity-100' : 'opacity-0')
         }
       />
@@ -113,22 +114,40 @@ export function Sheet({ open, onClose, title, children }: SheetProps) {
         ref={dialogRef}
         onKeyDown={onDialogKeyDown}
         className={
-          'relative w-full max-w-md max-h-[85vh] flex flex-col rounded-t-3xl bg-bg border-t border-subtle shadow-[0_-12px_36px_rgba(0,0,0,0.55)] transition-transform duration-300 ease-out ' +
+          'relative w-full max-w-md max-h-[85vh] flex flex-col rounded-t-2xl bg-bg transition-transform duration-300 ease-out ' +
           (open ? 'translate-y-0' : 'translate-y-full')
         }
-        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+        style={{
+          paddingBottom: 'env(safe-area-inset-bottom)',
+          // B1: lighter drop shadow + a hairline gold top edge ornament
+          // so the sheet feels "stamped" rather than walled-off.
+          boxShadow: '0 -6px 22px rgba(0,0,0,0.42)',
+          borderTop:
+            '1px solid color-mix(in srgb, var(--color-gold) 22%, transparent)',
+        }}
         role="dialog"
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
       >
-        <header className="flex items-center justify-between px-5 pt-4 pb-3">
-          <h2 className="font-display text-xl text-ivory">{title}</h2>
+        {/* Grab-handle hint — a small centered bar above the header to read
+            as a dismissable drawer on mobile. Drawn with the gold ramp so
+            it tints with the skin. */}
+        <span
+          aria-hidden
+          className="absolute left-1/2 -translate-x-1/2 top-1.5 w-9 h-1 rounded-full"
+          style={{
+            background:
+              'color-mix(in srgb, var(--color-gold) 28%, transparent)',
+          }}
+        />
+        <header className="flex items-center justify-between px-5 pt-5 pb-3">
+          <h2 className="font-display text-lg text-ivory tracking-wide">{title}</h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close panel"
-            className="relative w-11 h-11 rounded-full border border-subtle text-secondary hover:text-ivory hover:border-gold/60 flex items-center justify-center transition-colors duration-150"
+            className="relative w-11 h-11 rounded-full border border-subtle text-secondary hover:text-ivory hover:border-gold/55 flex items-center justify-center transition-colors duration-150"
           >
             <svg
               width="14"

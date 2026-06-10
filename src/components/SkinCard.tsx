@@ -43,12 +43,12 @@ export function SkinCard({
       />
 
       {/* Body */}
-      <div className="flex-1 min-w-0 px-3 py-2.5 flex flex-col justify-center gap-0.5">
+      <div className="flex-1 min-w-0 px-3 py-3 flex flex-col justify-center gap-1">
         <div className="flex items-center gap-2 min-w-0">
           <p className="text-sm font-medium text-ivory truncate">{skin.name}</p>
           <CategoryBadge skin={skin} />
         </div>
-        <p className="text-[11px] text-secondary leading-snug line-clamp-2">
+        <p className="text-xs text-secondary leading-snug line-clamp-2">
           {!isUnlocked && skin.unlockRequirement
             ? skin.unlockRequirement
             : skin.description}
@@ -99,8 +99,20 @@ function ActionButton({
   onDevUnlock,
 }: ActionButtonProps) {
   if (isEquipped) {
+    // Refined "Equipped" — a small gold dot + caption reads as state, not
+    // a competing button. Prior solid-border pill fought with the Equip
+    // button visually on adjacent cards.
     return (
-      <span className="px-2.5 py-1.5 text-[10px] uppercase tracking-[0.18em] text-gold/90 border border-gold/40 rounded-md">
+      <span className="flex items-center gap-1.5 px-2 py-1.5 text-2xs uppercase tracking-[0.18em] text-gold/90">
+        <span
+          aria-hidden
+          className="w-1.5 h-1.5 rounded-full"
+          style={{
+            background: 'var(--color-gold)',
+            boxShadow:
+              '0 0 6px color-mix(in srgb, var(--color-gold) 60%, transparent)',
+          }}
+        />
         Equipped
       </span>
     );
@@ -111,7 +123,16 @@ function ActionButton({
       <button
         type="button"
         onClick={onEquip}
-        className="px-2.5 py-1.5 text-[10px] uppercase tracking-[0.18em] font-semibold text-tray-deep bg-gold rounded-md active:scale-95 transition-transform"
+        className="px-2.5 py-1.5 text-2xs uppercase tracking-[0.18em] font-semibold rounded-md active:scale-95 transition-transform"
+        style={{
+          background:
+            'linear-gradient(180deg, color-mix(in srgb, var(--color-gold) 92%, white 8%) 0%, var(--color-gold) 100%)',
+          color: 'var(--color-tray-deep)',
+          border:
+            '1px solid color-mix(in srgb, var(--color-gold) 80%, black 20%)',
+          boxShadow:
+            'inset 0 1px 0 color-mix(in srgb, var(--color-gold) 35%, white 65%)',
+        }}
       >
         Equip
       </button>
@@ -120,7 +141,7 @@ function ActionButton({
 
   if (skin.category === 'premium') {
     return (
-      <span className="px-2.5 py-1.5 text-[10px] uppercase tracking-[0.18em] text-secondary/80 border border-subtle rounded-md">
+      <span className="px-2.5 py-1.5 text-2xs uppercase tracking-[0.18em] text-secondary/80 border border-subtle rounded-md">
         Coming Soon
       </span>
     );
@@ -131,7 +152,7 @@ function ActionButton({
   // bundle when the condition is statically false).
   return (
     <div className="flex flex-col items-end gap-1">
-      <span className="px-2.5 py-1.5 text-[10px] uppercase tracking-[0.18em] text-secondary/80 border border-subtle rounded-md">
+      <span className="px-2.5 py-1.5 text-2xs uppercase tracking-[0.18em] text-secondary/80 border border-subtle rounded-md">
         Locked
       </span>
       {import.meta.env.DEV && onDevUnlock && (

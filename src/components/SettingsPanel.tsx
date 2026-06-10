@@ -1,5 +1,6 @@
 import { Sheet } from './Sheet';
 import { tavernSurface } from '../lib/ui/tavernSurface';
+import { TavernDivider } from '../lib/ui/tavernOrnaments';
 import type { Settings } from '../types/dice';
 
 interface SettingsPanelProps {
@@ -60,7 +61,8 @@ export function SettingsPanel({
           onChange={(v) => update({ hapticsEnabled: v })}
         />
 
-        <p className="mt-4 text-xs text-secondary/60 leading-relaxed">
+        <TavernDivider withDiamond className="mt-3 mb-1" />
+        <p className="text-xs text-secondary/60 leading-relaxed">
           Every die's result is decided by the physics — the value shown is
           read from the upward face of the settled die. D10 and D100 share
           a pentagonal-trapezohedron geometry; their opposite faces sum to
@@ -133,7 +135,7 @@ function ToggleRow({
         <p className="text-sm text-ivory font-medium flex items-center gap-2">
           {label}
           {comingSoon && (
-            <span className="text-[9px] uppercase tracking-[0.15em] text-secondary/80 border border-subtle px-1.5 py-0.5 rounded">
+            <span className="text-2xs uppercase tracking-[0.18em] text-secondary/80 border border-subtle px-1.5 py-0.5 rounded">
               soon
             </span>
           )}
@@ -151,9 +153,17 @@ function ToggleRow({
         disabled={comingSoon}
         className={
           'relative shrink-0 w-11 h-6 rounded-full transition-colors duration-200 ' +
-          (value
-            ? 'bg-gold'
-            : 'bg-white/[0.08] border border-subtle')
+          (value ? '' : 'bg-white/[0.08] border border-subtle')
+        }
+        style={
+          value
+            ? {
+                background:
+                  'linear-gradient(180deg, color-mix(in srgb, var(--color-gold) 92%, white 8%) 0%, var(--color-gold) 100%)',
+                boxShadow:
+                  'inset 0 1px 0 color-mix(in srgb, var(--color-gold) 35%, white 65%), inset 0 -1px 0 color-mix(in srgb, var(--color-gold) 55%, black 45%)',
+              }
+            : undefined
         }
       >
         <span
@@ -190,7 +200,14 @@ function SegmentRow({
       {sublabel && (
         <p className="text-xs text-secondary mt-0.5 mb-2">{sublabel}</p>
       )}
-      <div className="flex gap-1.5 mt-2 rounded-lg bg-tray-deep/40 p-1">
+      <div
+        className="flex gap-1 mt-2 rounded-lg p-1"
+        style={{
+          background: 'color-mix(in srgb, var(--color-tray-deep) 55%, transparent)',
+          border:
+            '1px solid color-mix(in srgb, var(--color-gold) 10%, transparent)',
+        }}
+      >
         {options.map((opt) => {
           const active = value === opt.value;
           return (
@@ -199,10 +216,20 @@ function SegmentRow({
               type="button"
               onClick={() => onChange(opt.value)}
               className={
-                'flex-1 text-xs uppercase tracking-wider py-1.5 rounded-md transition-all duration-150 ' +
+                'flex-1 text-xs uppercase tracking-[0.18em] py-1.5 rounded-md transition-all duration-150 ' +
                 (active
-                  ? 'bg-gold text-tray-deep font-semibold'
+                  ? 'text-tray-deep font-semibold'
                   : 'text-secondary hover:text-ivory')
+              }
+              style={
+                active
+                  ? {
+                      background:
+                        'linear-gradient(180deg, color-mix(in srgb, var(--color-gold) 92%, white 8%) 0%, var(--color-gold) 100%)',
+                      boxShadow:
+                        'inset 0 1px 0 color-mix(in srgb, var(--color-gold) 40%, white 60%), inset 0 -1px 0 color-mix(in srgb, var(--color-gold) 50%, black 50%)',
+                    }
+                  : undefined
               }
             >
               {opt.label}

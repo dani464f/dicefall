@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
 import { formatDiceFormula } from '../lib/dice';
-import { tavernSurface } from '../lib/ui/tavernSurface';
+import { tavernCaption, tavernSurface } from '../lib/ui/tavernSurface';
 import type { RollResult } from '../types/dice';
 
 interface RollHistoryProps {
@@ -30,7 +30,7 @@ export function RollHistory({ open, onClose, history, onClear }: RollHistoryProp
                   <span className="font-display text-sm text-secondary tabular-nums">
                     {formatDiceFormula(r)}
                   </span>
-                  <span className="font-display text-2xl text-ivory tabular-nums">
+                  <span className="font-display text-2xl text-ivory tabular-nums leading-none">
                     {r.total}
                   </span>
                 </div>
@@ -56,7 +56,7 @@ export function RollHistory({ open, onClose, history, onClear }: RollHistoryProp
                           className={
                             'px-1.5 py-0.5 rounded text-xs tabular-nums min-w-[24px] text-center ' +
                             (kept
-                              ? 'bg-tray-deep border border-gold/60 text-gold font-semibold'
+                              ? 'bg-tray-deep border border-gold/55 text-gold font-semibold'
                               : dropped
                                 ? 'bg-tray-deep/40 border border-subtle text-secondary/60 line-through'
                                 : 'bg-tray-deep/70 border border-subtle text-ivory')
@@ -73,7 +73,7 @@ export function RollHistory({ open, onClose, history, onClear }: RollHistoryProp
                     </span>
                   )}
                 </div>
-                <p className="mt-2 text-[10px] uppercase tracking-[0.2em] text-secondary/60">
+                <p className={`mt-2 ${tavernCaption}`}>
                   <RelativeTime ts={r.timestamp} />
                 </p>
               </li>
@@ -82,7 +82,7 @@ export function RollHistory({ open, onClose, history, onClear }: RollHistoryProp
           <button
             type="button"
             onClick={onClear}
-            className="w-full text-xs uppercase tracking-[0.2em] text-secondary/70 hover:text-danger py-2 transition-colors"
+            className="w-full text-xs uppercase tracking-[0.22em] text-secondary/70 hover:text-danger py-2 transition-colors"
           >
             Clear history
           </button>

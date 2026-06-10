@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Sheet } from './Sheet';
 import { formatDiceFormula } from '../lib/dice';
-import { tavernSurface } from '../lib/ui/tavernSurface';
+import { tavernCaption, tavernSurface } from '../lib/ui/tavernSurface';
 import type { Preset, RollSetup } from '../types/dice';
 
 interface PresetsPanelProps {
@@ -40,16 +40,14 @@ export function PresetsPanel({
         className="flex flex-col gap-3 mb-5 pb-5 border-b border-subtle"
       >
         <label className="block">
-          <span className="block text-[10px] uppercase tracking-[0.25em] text-secondary mb-1.5">
-            Save current as
-          </span>
+          <span className={`block mb-1.5 ${tavernCaption}`}>Save current as</span>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Longsword Damage"
             maxLength={40}
-            className="w-full rounded-lg bg-white/[0.04] border border-subtle px-3 py-2.5 text-ivory placeholder:text-secondary/50 focus:border-gold/60 focus:outline-none transition-colors"
+            className="w-full rounded-lg bg-white/[0.04] border border-subtle px-3 py-2.5 text-ivory placeholder:text-secondary/50 focus:border-gold/55 focus:outline-none transition-colors"
           />
         </label>
         <div className="flex items-center justify-between gap-3">
@@ -59,7 +57,20 @@ export function PresetsPanel({
           <button
             type="submit"
             disabled={!name.trim()}
-            className="px-4 py-2 rounded-lg bg-gold text-tray-deep font-semibold text-sm tracking-wider uppercase shadow-[0_2px_8px_rgba(201,164,92,0.3)] active:scale-95 transition-all duration-100 disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none"
+            className="px-4 py-2 rounded-lg font-semibold text-xs tracking-[0.22em] uppercase active:scale-95 transition-all duration-100 disabled:opacity-30 disabled:cursor-not-allowed"
+            style={{
+              // Refined "primary" — derived from the gold ramp so it
+              // re-tints with the skin instead of pinning #c9a45c. Less
+              // candy than the prior flat bg-gold, still reads as the
+              // dominant action in the form.
+              background:
+                'linear-gradient(180deg, color-mix(in srgb, var(--color-gold) 92%, white 8%) 0%, var(--color-gold) 100%)',
+              color: 'var(--color-tray-deep)',
+              border:
+                '1px solid color-mix(in srgb, var(--color-gold) 80%, black 20%)',
+              boxShadow:
+                '0 1px 3px rgba(0,0,0,0.45), inset 0 1px 0 color-mix(in srgb, var(--color-gold) 40%, white 60%)',
+            }}
           >
             Save
           </button>

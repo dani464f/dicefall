@@ -1,5 +1,6 @@
 import { Sheet } from './Sheet';
 import { SkinCard } from './SkinCard';
+import { tavernSectionLabel } from '../lib/ui/tavernSurface';
 import type { Skin, SkinCategory } from '../types/skins';
 
 interface SkinSelectorProps {
@@ -43,10 +44,8 @@ export function SkinSelector({
           return (
             <section key={category} className="flex flex-col gap-2">
               <header className="flex items-baseline justify-between px-0.5">
-                <h3 className="text-[10px] uppercase tracking-[0.28em] text-secondary/80">
-                  {label}
-                </h3>
-                <span className="text-[10px] text-secondary/50">
+                <h3 className={tavernSectionLabel}>{label}</h3>
+                <span className="text-2xs text-secondary/50 tabular-nums">
                   {list.length}
                 </span>
               </header>
@@ -73,7 +72,7 @@ export function SkinSelector({
           );
         })}
 
-        <p className="text-[10px] text-secondary/50 leading-relaxed mt-2 px-0.5">
+        <p className="text-2xs text-secondary/50 leading-relaxed mt-2 px-0.5">
           Skins only change how Dicefall looks and sounds. Roll math, physics,
           history, and presets stay the same across every skin.
         </p>

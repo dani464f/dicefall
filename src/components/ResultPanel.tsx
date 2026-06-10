@@ -1,4 +1,9 @@
 import { applyRollMode } from '../lib/dice';
+import {
+  tavernPanelStyle,
+  tavernSectionLabel,
+} from '../lib/ui/tavernSurface';
+import { TavernCornerOrnaments } from '../lib/ui/tavernOrnaments';
 import type { RollResult } from '../types/dice';
 
 interface ResultPanelProps {
@@ -14,6 +19,12 @@ interface ResultPanelProps {
  * When the roll was made with advantage/disadvantage, the panel shows
  * both rolled values with the kept die highlighted and a small badge
  * indicating the mode.
+ *
+ * B1 refinement: replaced the four boxy corner brackets with a single
+ * top-left / bottom-right pair (TavernCornerOrnaments) so the frame
+ * reads as one ornament, not four. Panel surface + edge moved to the
+ * shared tavernPanelStyle helper so ResultPanel + DiceSelector share
+ * the same elevation language.
  */
 export function ResultPanel({ result, isRolling }: ResultPanelProps) {
   if (!result || isRolling) {
@@ -40,37 +51,31 @@ export function ResultPanel({ result, isRolling }: ResultPanelProps) {
     <div
       className="relative w-full px-5 py-3 select-none"
       style={{
-        // Skin-aware: derives the surface tones from --color-tray-deep and
-        // the border from --color-gold so equipping a new skin shifts the
-        // panel automatically instead of leaving a hard-coded brown frame.
-        background:
-          'linear-gradient(180deg, color-mix(in srgb, var(--color-tray-deep) 78%, transparent) 0%, color-mix(in srgb, var(--color-tray-deep) 88%, #000 12%) 100%)',
-        border: '1px solid color-mix(in srgb, var(--color-gold) 55%, transparent)',
-        borderRadius: '10px',
-        boxShadow:
-          '0 8px 24px rgba(0,0,0,0.6), inset 0 0 12px rgba(0,0,0,0.45)',
+        ...tavernPanelStyle({ tone: 'lifted' }),
         animation: 'totalReveal 320ms cubic-bezier(0.2, 0.7, 0.2, 1) both',
       }}
     >
-      <FantasyCorners />
+      <TavernCornerOrnaments />
       <div className="grid grid-cols-2 gap-3 items-center text-center">
-        <div className="flex flex-col items-center">
-          <p className="text-[9px] uppercase tracking-[0.3em] text-gold/70">
-            Result
-          </p>
-          <p className="font-display text-2xl text-ivory tabular-nums">
+        <div className="flex flex-col items-center gap-1">
+          <p className={tavernSectionLabel}>Result</p>
+          <p className="font-display text-2xl text-ivory tabular-nums leading-none">
             {expression}
           </p>
         </div>
-        <div className="flex flex-col items-center border-l border-gold/30">
-          <p className="text-[9px] uppercase tracking-[0.3em] text-gold/70">
-            Total
-          </p>
+        <div
+          className="flex flex-col items-center gap-1"
+          style={{
+            borderLeft:
+              '1px solid color-mix(in srgb, var(--color-gold) 22%, transparent)',
+          }}
+        >
+          <p className={tavernSectionLabel}>Total</p>
           <p
-            className="font-display text-4xl text-gold tabular-nums leading-none"
+            className="font-display text-3xl text-gold tabular-nums leading-none"
             style={{
               textShadow:
-                '0 0 14px color-mix(in srgb, var(--color-gold) 45%, transparent)',
+                '0 0 12px color-mix(in srgb, var(--color-gold) 32%, transparent)',
             }}
           >
             {total}
@@ -101,12 +106,18 @@ function AdvantageDetail({
     mode === 'disadvantage' ? 'var(--color-danger)' : 'var(--color-gold)';
   const badge = mode === 'advantage' ? 'Adv ↑' : 'Dis ↓';
   return (
-    <div className="mt-2 pt-2 border-t border-gold/15 flex items-center justify-center gap-3 flex-wrap">
+    <div
+      className="mt-2 pt-2 flex items-center justify-center gap-3 flex-wrap"
+      style={{
+        borderTop:
+          '1px solid color-mix(in srgb, var(--color-gold) 12%, transparent)',
+      }}
+    >
       <span
-        className="text-[9px] uppercase tracking-[0.25em] px-1.5 py-0.5 rounded"
+        className="text-2xs uppercase tracking-[0.22em] px-1.5 py-0.5 rounded"
         style={{
           color: accent,
-          border: `1px solid color-mix(in srgb, ${accent} 55%, transparent)`,
+          border: `1px solid color-mix(in srgb, ${accent} 50%, transparent)`,
         }}
       >
         {badge}
@@ -130,31 +141,5 @@ function AdvantageDetail({
         ))}
       </span>
     </div>
-  );
-}
-
-function FantasyCorners() {
-  // Four small gold corner ornaments — purely decorative.
-  const cornerStyle =
-    'absolute w-3 h-3 border-gold pointer-events-none';
-  return (
-    <>
-      <span
-        className={cornerStyle}
-        style={{ top: -1, left: -1, borderTop: '1px solid', borderLeft: '1px solid' }}
-      />
-      <span
-        className={cornerStyle}
-        style={{ top: -1, right: -1, borderTop: '1px solid', borderRight: '1px solid' }}
-      />
-      <span
-        className={cornerStyle}
-        style={{ bottom: -1, left: -1, borderBottom: '1px solid', borderLeft: '1px solid' }}
-      />
-      <span
-        className={cornerStyle}
-        style={{ bottom: -1, right: -1, borderBottom: '1px solid', borderRight: '1px solid' }}
-      />
-    </>
   );
 }
