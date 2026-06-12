@@ -470,6 +470,70 @@ function buildScene(
     requestRender();
   };
 
+  // ---------- dynamic camera framing ----------
+  // The camera frames whatever dice are actually in the tray: a single die
+  // reads closer, a 12-die spill pulls back until the whole pile fits, and
+  // an empty tray returns to the default establishing view. Implemented as
+  // a per-frame target (bounding box of dice → distance along the fixed
+  // cinematic view direction) + exponential damping toward it, so framing
+  // changes glide instead of cutting. Integrates with on-demand rendering:
+  // a moving camera keeps frames rendering; a camera at rest costs nothing.
+  const CAM_DIR = new THREE.Vector3(0, 5.5, 6.5).normalize();
+  const CAM_DEFAULT_DIST = new THREE.Vector3(0, 5.5, 6.5).length();
+  // Closest the rig will push in (single settled die) and farthest it will
+  // pull out (max-quantity pile on a narrow viewport). The min keeps enough
+  // tray context that the bottom control stack never covers the die.
+  const CAM_MIN_DIST = 6.2;
+  const CAM_MAX_DIST = 12;
+  // Dice still raining in from the staggered spawn column sit far above
+  // the table; framing them would yank the camera skyward. They drop into
+  // frame instead.
+  const CAM_TRACK_MAX_Y = 4;
+  const camLook = new THREE.Vector3(0, 0, 0);
+  const camTargetLook = new THREE.Vector3(0, 0, 0);
+  let camTargetDist = CAM_DEFAULT_DIST;
+  const _bb = new THREE.Box3();
+  const _bbCenter = new THREE.Vector3();
+  const _bbSize = new THREE.Vector3();
+  const _camDesired = new THREE.Vector3();
+
+  const updateCameraTarget = () => {
+    _bb.makeEmpty();
+    if (activeThrow) {
+      for (const d of activeThrow.dice) {
+        if (d.mesh.position.y < CAM_TRACK_MAX_Y) _bb.expandByPoint(d.mesh.position);
+      }
+    }
+    for (const d of legacyDice) {
+      if (d.mesh.position.y < CAM_TRACK_MAX_Y) _bb.expandByPoint(d.mesh.position);
+    }
+    if (_bb.isEmpty()) {
+      camTargetLook.set(0, 0, 0);
+      camTargetDist = CAM_DEFAULT_DIST;
+      return;
+    }
+    _bb.getCenter(_bbCenter);
+    _bb.getSize(_bbSize);
+    // Look at the pile's floor-level footprint, gently clamped so the
+    // camera never chases a die pressed into a far corner off-frame.
+    camTargetLook.set(
+      THREE.MathUtils.clamp(_bbCenter.x, -1.2, 1.2),
+      0,
+      THREE.MathUtils.clamp(_bbCenter.z, -1.2, 1.2),
+    );
+    // Fit the pile's half-extent (plus one die radius of margin) in both
+    // the vertical fov and the aspect-corrected horizontal fov.
+    const spread = Math.max(_bbSize.x, _bbSize.z) / 2 + 0.95;
+    const halfV = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const distV = spread / halfV;
+    const distH = spread / (halfV * Math.max(camera.aspect, 0.55));
+    camTargetDist = THREE.MathUtils.clamp(
+      Math.max(distV, distH) * 1.18,
+      CAM_MIN_DIST,
+      CAM_MAX_DIST,
+    );
+  };
+
   // ---------- render loop ----------
   // Fixed-timestep accumulator. Physics steps at exactly 1/60 s regardless
   // of display refresh rate. Without this, settle detection fired ~2.4×
@@ -522,6 +586,27 @@ function buildScene(
     for (const d of legacyDice) d.tick(delta);
 
     if (subSteps > 0 || tweenAnimating || legacyNeedsSim) {
+      requestRender();
+    }
+
+    // ---- camera follow ----
+    updateCameraTarget();
+    _camDesired.copy(camTargetLook).addScaledVector(CAM_DIR, camTargetDist);
+    const camOffsetSq =
+      camera.position.distanceToSquared(_camDesired) +
+      camLook.distanceToSquared(camTargetLook);
+    if (camOffsetSq > 1e-6) {
+      // Snap instead of glide under reduced motion (the attribute App
+      // mirrors onto <html>); otherwise exponential damping with a ~¼ s
+      // time constant — fast enough to track a moving pile, slow enough
+      // to read as a camera operator, not a cut.
+      const snap =
+        document.documentElement.getAttribute('data-reduced-motion') ===
+        'true';
+      const k = snap ? 1 : 1 - Math.exp(-delta * 4);
+      camera.position.lerp(_camDesired, k);
+      camLook.lerp(camTargetLook, k);
+      camera.lookAt(camLook);
       requestRender();
     }
 
