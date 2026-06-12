@@ -29,8 +29,14 @@ export interface TavernWorld {
 }
 
 interface BuildOptions {
-  /** Reuse DiceScene's cached texture loader so maps are shared. */
-  getTexture: (url: string, srgb: boolean, onLoad: () => void) => THREE.Texture;
+  /** Reuse DiceScene's cached texture loader. `repeat` is part of the
+   *  cache key — every distinct tiling gets its own texture instance. */
+  getTexture: (
+    url: string,
+    srgb: boolean,
+    onLoad: () => void,
+    repeat?: [number, number],
+  ) => THREE.Texture;
   requestRender: () => void;
 }
 
@@ -70,6 +76,8 @@ function makeFlameSprite(scale: number, opacity: number): THREE.Sprite {
     depthWrite: false,
     transparent: true,
     opacity,
+    // Flames must read through the room fog — fire IS the light source.
+    fog: false,
   });
   const s = new THREE.Sprite(mat);
   s.scale.set(scale * 0.6, scale, 1);
@@ -88,15 +96,10 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   };
 
   // ---- shared materials ----------------------------------------------------
-  const woodMap = getTexture('/textures/wood_diff.webp', true, requestRender);
-  const woodNor = getTexture('/textures/wood_nor.webp', false, requestRender);
-  const stoneMap = getTexture('/textures/stone_diff.webp', true, requestRender);
-  const stoneNor = getTexture('/textures/stone_nor.webp', false, requestRender);
-
   const beamMat = track(
     new THREE.MeshStandardMaterial({
-      map: woodMap,
-      normalMap: woodNor,
+      map: getTexture('/textures/wood_diff.webp', true, requestRender, [1.4, 0.4]),
+      normalMap: getTexture('/textures/wood_nor.webp', false, requestRender, [1.4, 0.4]),
       color: 0x4a3826,
       roughness: 0.9,
       metalness: 0.02,
@@ -104,17 +107,26 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   );
   const wallMat = track(
     new THREE.MeshStandardMaterial({
-      map: woodMap,
-      normalMap: woodNor,
+      map: getTexture('/textures/wood_diff.webp', true, requestRender, [6, 2]),
+      normalMap: getTexture('/textures/wood_nor.webp', false, requestRender, [6, 2]),
       color: 0x2e2418,
       roughness: 0.95,
       metalness: 0.0,
     }),
   );
+  const floorMat = track(
+    new THREE.MeshStandardMaterial({
+      map: getTexture('/textures/wood_diff.webp', true, requestRender, [9, 3.5]),
+      normalMap: getTexture('/textures/wood_nor.webp', false, requestRender, [9, 3.5]),
+      color: 0x241a10,
+      roughness: 0.96,
+      metalness: 0.0,
+    }),
+  );
   const stoneMat = track(
     new THREE.MeshStandardMaterial({
-      map: stoneMap,
-      normalMap: stoneNor,
+      map: getTexture('/textures/stone_diff.webp', true, requestRender, [1.4, 1]),
+      normalMap: getTexture('/textures/stone_nor.webp', false, requestRender, [1.4, 1]),
       color: 0x8a7a6a,
       roughness: 0.94,
       metalness: 0.0,
@@ -122,9 +134,9 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   );
   const pewterMat = track(
     new THREE.MeshStandardMaterial({
-      color: 0x9a9da2,
-      roughness: 0.38,
-      metalness: 0.88,
+      color: 0x686c72,
+      roughness: 0.45,
+      metalness: 0.85,
     }),
   );
   const ironMat = track(
@@ -136,8 +148,8 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   );
   const waxMat = track(
     new THREE.MeshStandardMaterial({
-      color: 0xd9c8a4,
-      roughness: 0.55,
+      color: 0xc9ae74,
+      roughness: 0.6,
       metalness: 0.0,
     }),
   );
@@ -157,8 +169,8 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   );
   const parchmentMat = track(
     new THREE.MeshStandardMaterial({
-      color: 0xc9b896,
-      roughness: 0.85,
+      color: 0xa8916a,
+      roughness: 0.88,
       metalness: 0.0,
     }),
   );
@@ -188,16 +200,36 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   // ==========================================================================
   // THE ROOM
   // ==========================================================================
+  // The room stands at floor level — the gaming table is furniture in it.
+  // Everything ground-based lives in floorGroup so the whole room sits
+  // FLOOR_Y below the tabletop. Sightline note: from the seated camera the
+  // tabletop occludes roughly everything below y≈-1.7 at the back wall, so
+  // the fireplace is sized tall enough that its fire reads clearly over
+  // the table edge.
+  const FLOOR_Y = -1.6;
+  const floorGroup = new THREE.Group();
+  floorGroup.position.y = FLOOR_Y;
+  group.add(floorGroup);
 
-  // Back wall — wood paneling, mostly swallowed by fog/darkness. Kept
-  // low (top ≈ 6.1) so the painted bokeh plate glows above the panel
-  // line: "more tavern" receding past the wall.
+  // Plank floor — visible as a band between the table's far edge and the
+  // wall; kills the void gap.
   {
-    const wallGeom = new THREE.PlaneGeometry(34, 7.2);
+    const floorGeom = new THREE.PlaneGeometry(44, 16);
+    track(floorGeom);
+    const floor = new THREE.Mesh(floorGeom, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(0, 0, -8.5);
+    floor.receiveShadow = true;
+    floorGroup.add(floor);
+  }
+
+  // Back wall — wood paneling from the floor up to ≈6.4, leaving the
+  // painted bokeh plate glowing above the panel line.
+  {
+    const wallGeom = new THREE.PlaneGeometry(34, 8.0);
     track(wallGeom);
     const wall = new THREE.Mesh(wallGeom, wallMat);
-    wallMat.map!.repeat.set(6, 1.6);
-    wall.position.set(0, 2.5, -13.2);
+    wall.position.set(0, 2.4, -13.2);
     wall.receiveShadow = true;
     group.add(wall);
   }
@@ -213,73 +245,100 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
     add(beamCross, beamMat, 0, 7.3, -9.5);
   }
 
-  // Support columns flanking the play area, just outside the table.
+  // Support columns flanking the play area — floor to ceiling beams.
   {
-    const colGeom = new THREE.BoxGeometry(0.6, 9, 0.6);
-    add(colGeom, beamMat, -10.2, 3.0, -7.5, { castShadow: true });
-    add(colGeom, beamMat, 10.2, 3.0, -8.0, { castShadow: true });
+    const colGeom = new THREE.BoxGeometry(0.6, 9.6, 0.6);
+    track(colGeom);
+    for (const [cx, cz] of [
+      [-10.2, -7.5],
+      [10.2, -8.0],
+    ] as Array<[number, number]>) {
+      const col = new THREE.Mesh(colGeom, beamMat);
+      col.position.set(cx, 4.8, cz);
+      col.castShadow = true;
+      col.receiveShadow = true;
+      floorGroup.add(col);
+    }
   }
 
   // ==========================================================================
   // FIREPLACE (left-back) — the second light source of the room.
   // ==========================================================================
   const fire = {
-    light: new THREE.PointLight(0xff7a28, 55, 22, 1.7),
+    light: new THREE.PointLight(0xff7a28, 70, 26, 1.7),
     sprites: [] as THREE.Sprite[],
-    baseIntensity: 55,
+    baseIntensity: 70,
   };
   {
+    // All fireplace pieces live in floorGroup (y values are heights above
+    // the room floor). Sized tall so the firelight + flames read clearly
+    // over the tabletop occlusion line.
     const fx = -6.2;
     const fz = -12.4;
-    // Stone surround: two jambs + lintel + chimney breast.
-    const jamb = new THREE.BoxGeometry(0.8, 2.6, 1.1);
-    add(jamb, stoneMat, fx - 1.55, 1.3, fz, { castShadow: true });
-    add(jamb, stoneMat, fx + 1.55, 1.3, fz, { castShadow: true });
-    const lintel = new THREE.BoxGeometry(4.0, 0.7, 1.2);
-    add(lintel, stoneMat, fx, 2.95, fz, { castShadow: true });
-    const breast = new THREE.BoxGeometry(3.4, 4.6, 0.9);
-    add(breast, stoneMat, fx, 5.6, fz - 0.05);
+    const addF = (
+      geom: THREE.BufferGeometry,
+      mat: THREE.Material,
+      x: number,
+      y: number,
+      z: number,
+      castShadow = false,
+    ) => {
+      track(geom);
+      const m = new THREE.Mesh(geom, mat);
+      m.position.set(x, y, z);
+      m.castShadow = castShadow;
+      m.receiveShadow = true;
+      floorGroup.add(m);
+      return m;
+    };
+    // Stone surround: jambs + lintel + chimney breast (pokes above the
+    // wall line into the backdrop glow).
+    addF(new THREE.BoxGeometry(0.9, 3.4, 1.1), stoneMat, fx - 1.75, 1.7, fz, true);
+    addF(new THREE.BoxGeometry(0.9, 3.4, 1.1), stoneMat, fx + 1.75, 1.7, fz, true);
+    addF(new THREE.BoxGeometry(4.4, 0.8, 1.2), stoneMat, fx, 3.8, fz, true);
+    addF(new THREE.BoxGeometry(3.6, 5.6, 0.95), stoneMat, fx, 7.0, fz - 0.05);
+    // Hearth slab the fire sits on.
+    addF(new THREE.BoxGeometry(4.2, 0.25, 1.8), stoneMat, fx, 0.125, fz + 0.45);
     // Firebox: near-black interior so the flames have a void to live in.
-    const boxGeom = new THREE.BoxGeometry(2.6, 2.4, 0.7);
     const fireboxMat = track(
       new THREE.MeshStandardMaterial({ color: 0x0a0604, roughness: 1 }),
     );
-    add(boxGeom, fireboxMat, fx, 1.2, fz - 0.15);
-    // Glowing log + embers (emissive, bloom feeds on these in Phase B).
-    const logGeom = new THREE.CylinderGeometry(0.14, 0.14, 1.6, 8);
+    addF(new THREE.BoxGeometry(3.0, 2.9, 0.7), fireboxMat, fx, 1.7, fz - 0.15);
+    // Glowing log + embers (emissive — bloom feeds on these in Phase B).
     const logMat = track(
       new THREE.MeshStandardMaterial({
         color: 0x2a1208,
         roughness: 1,
         emissive: 0xb33c08,
-        emissiveIntensity: 0.55,
+        emissiveIntensity: 0.7,
       }),
     );
+    const logGeom = new THREE.CylinderGeometry(0.16, 0.16, 1.9, 8);
+    track(logGeom);
     const log = new THREE.Mesh(logGeom, logMat);
     log.rotation.z = Math.PI / 2;
-    log.position.set(fx, 0.32, fz + 0.18);
-    group.add(log);
-    track(logGeom);
-    const emberGeom = new THREE.PlaneGeometry(1.7, 0.5);
+    log.position.set(fx, 0.42, fz + 0.2);
+    floorGroup.add(log);
+    const emberGeom = new THREE.PlaneGeometry(2.0, 0.6);
     track(emberGeom);
     const ember = new THREE.Mesh(emberGeom, emberMat);
     ember.rotation.x = -Math.PI / 2;
-    ember.position.set(fx, 0.06, fz + 0.25);
-    group.add(ember);
+    ember.position.set(fx, 0.27, fz + 0.3);
+    floorGroup.add(ember);
     // Layered flame sprites.
-    const f1 = makeFlameSprite(1.7, 0.85);
-    f1.position.set(fx, 1.05, fz + 0.25);
-    const f2 = makeFlameSprite(1.15, 0.7);
-    f2.position.set(fx - 0.4, 0.8, fz + 0.3);
-    const f3 = makeFlameSprite(0.95, 0.7);
-    f3.position.set(fx + 0.45, 0.75, fz + 0.3);
+    const f1 = makeFlameSprite(2.1, 0.9);
+    f1.position.set(fx, 1.5, fz + 0.25);
+    const f2 = makeFlameSprite(1.4, 0.75);
+    f2.position.set(fx - 0.5, 1.15, fz + 0.3);
+    const f3 = makeFlameSprite(1.2, 0.75);
+    f3.position.set(fx + 0.55, 1.1, fz + 0.3);
     fire.sprites.push(f1, f2, f3);
-    group.add(f1, f2, f3);
+    floorGroup.add(f1, f2, f3);
     for (const s of fire.sprites) track(s.material);
     // The fire light itself.
-    fire.light.position.set(fx, 1.3, fz + 1.2);
+    fire.light.position.set(fx, 1.8, fz + 1.3);
     fire.light.castShadow = false; // second shadow map not worth the cost
-    group.add(fire.light);
+    floorGroup.add(fire.light);
   }
 
   // ==========================================================================
@@ -325,41 +384,53 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   // GLOOM DRESSING — silhouettes that make it a *room*, not a set.
   // ==========================================================================
   {
-    // A second table + bench, right side, deep in shadow.
-    const tableTop = new THREE.BoxGeometry(3.4, 0.18, 1.8);
-    add(tableTop, beamMat, 8.6, 0.95, -9.6, { ry: -0.35 });
-    const legGeom = new THREE.BoxGeometry(0.16, 1.0, 0.16);
-    add(legGeom, beamMat, 7.4, 0.45, -10.1, { ry: -0.35 });
-    add(legGeom, beamMat, 9.7, 0.45, -9.1, { ry: -0.35 });
-    const bench = new THREE.BoxGeometry(3.0, 0.12, 0.5);
-    add(bench, beamMat, 8.2, 0.55, -8.4, { ry: -0.35 });
-    // Mug + bottle on that table — barely-lit glints.
-    const farMug = new THREE.CylinderGeometry(0.14, 0.16, 0.32, 10);
-    add(farMug, pewterMat, 8.3, 1.2, -9.5, { ry: 0 });
-    const farBottle = new THREE.CylinderGeometry(0.1, 0.13, 0.55, 10);
-    add(farBottle, darkGlassMat, 9.0, 1.32, -9.8);
+    const addG = (
+      geom: THREE.BufferGeometry,
+      mat: THREE.Material,
+      x: number,
+      y: number,
+      z: number,
+      ry = 0,
+    ) => {
+      track(geom);
+      const m = new THREE.Mesh(geom, mat);
+      m.position.set(x, y, z);
+      m.rotation.y = ry;
+      m.receiveShadow = true;
+      floorGroup.add(m);
+      return m;
+    };
+    // A second, taller table + bench on the right, deep in shadow — its
+    // top clears the gaming table's occlusion line so the silhouette and
+    // mug glint actually read.
+    addG(new THREE.BoxGeometry(3.4, 0.2, 1.9), beamMat, 8.6, 2.0, -10.2, -0.35);
+    addG(new THREE.BoxGeometry(0.18, 2.0, 0.18), beamMat, 7.4, 1.0, -10.7, -0.35);
+    addG(new THREE.BoxGeometry(0.18, 2.0, 0.18), beamMat, 9.7, 1.0, -9.7, -0.35);
+    addG(new THREE.BoxGeometry(3.0, 0.14, 0.55), beamMat, 8.0, 1.15, -8.9, -0.35);
+    addG(new THREE.CylinderGeometry(0.15, 0.17, 0.36, 10), pewterMat, 8.4, 2.28, -10.0);
+    addG(new THREE.CylinderGeometry(0.1, 0.13, 0.58, 10), darkGlassMat, 9.1, 2.39, -10.4);
 
-    // Shelf on the back wall with bottles.
-    const shelfGeom = new THREE.BoxGeometry(4.2, 0.12, 0.5);
-    add(shelfGeom, beamMat, 6.4, 4.0, -13.0);
-    const bottleGeom = new THREE.CylinderGeometry(0.11, 0.14, 0.62, 10);
+    // Shelf on the back wall with bottles (wall-mounted, above the table
+    // occlusion line).
+    addG(new THREE.BoxGeometry(4.2, 0.12, 0.5), beamMat, 6.4, 3.4, -13.0);
     for (const [bx, h] of [
       [5.0, 0.62],
       [5.8, 0.5],
       [6.7, 0.66],
       [7.6, 0.55],
     ] as Array<[number, number]>) {
-      const g = new THREE.CylinderGeometry(0.11, 0.14, h, 10);
-      track(g);
-      const b = new THREE.Mesh(g, darkGlassMat);
-      b.position.set(bx, 4.06 + h / 2, -13.0);
-      group.add(b);
+      addG(new THREE.CylinderGeometry(0.11, 0.14, h, 10), darkGlassMat, bx, 3.46 + h / 2, -13.0);
     }
-    track(bottleGeom);
 
-    // A barrel in the right-front gloom edge.
-    const barrelGeom = new THREE.CylinderGeometry(0.85, 0.95, 2.0, 14);
-    add(barrelGeom, beamMat, 11.5, 1.0, -5.5, { castShadow: true });
+    // A barrel against the right wall.
+    const barrel = addG(
+      new THREE.CylinderGeometry(0.85, 0.95, 2.1, 14),
+      beamMat,
+      11.5,
+      1.05,
+      -7.5,
+    );
+    barrel.castShadow = true;
   }
 
   // ==========================================================================
@@ -371,50 +442,51 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
     baseIntensity: 9,
   };
   {
-    // Candle cluster, left of the tray: [x, z, height].
+    // Candle cluster, left of the tray — pushed out so the seated shot's
+    // close perspective doesn't blow them up. Slim, warm-dimmed wax.
     const positions: Array<[number, number, number]> = [
-      [-3.6, 1.9, 0.52],
-      [-3.25, 2.25, 0.38],
-      [-3.85, 2.4, 0.3],
+      [-4.6, 0.8, 0.5],
+      [-4.25, 1.15, 0.36],
+      [-4.85, 1.3, 0.28],
     ];
     for (const [px, pz, h] of positions) {
-      const g = new THREE.CylinderGeometry(0.11, 0.12, h, 10);
+      const g = new THREE.CylinderGeometry(0.085, 0.095, h, 10);
       track(g);
       const c = new THREE.Mesh(g, waxMat);
       c.position.set(px, h / 2, pz);
       c.castShadow = true;
       group.add(c);
-      const fl = makeFlameSprite(0.3, 0.95);
-      fl.position.set(px, h + 0.16, pz);
+      const fl = makeFlameSprite(0.26, 0.95);
+      fl.position.set(px, h + 0.13, pz);
       tableCandles.sprites.push(fl);
       group.add(fl);
       track(fl.material);
     }
-    tableCandles.light.position.set(-3.55, 1.0, 2.15);
+    tableCandles.light.position.set(-4.55, 0.95, 1.0);
     group.add(tableCandles.light);
 
     // Pewter mug, right of the tray.
-    const mugBody = new THREE.CylinderGeometry(0.22, 0.26, 0.52, 14);
-    add(mugBody, pewterMat, 3.7, 0.26, 1.7, { castShadow: true });
-    const handleGeom = new THREE.TorusGeometry(0.16, 0.035, 8, 14, Math.PI);
+    const mugBody = new THREE.CylinderGeometry(0.18, 0.21, 0.42, 14);
+    add(mugBody, pewterMat, 4.5, 0.21, 0.5, { castShadow: true });
+    const handleGeom = new THREE.TorusGeometry(0.13, 0.03, 8, 14, Math.PI);
     track(handleGeom);
     const handle = new THREE.Mesh(handleGeom, pewterMat);
-    handle.position.set(3.96, 0.28, 1.7);
+    handle.position.set(4.71, 0.22, 0.5);
     handle.rotation.z = -Math.PI / 2;
     group.add(handle);
 
     // Coin stack + scatter, right-back of the tray.
     const coinGeom = new THREE.CylinderGeometry(0.09, 0.09, 0.025, 12);
     track(coinGeom);
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 4; i++) {
       const c = new THREE.Mesh(coinGeom, goldMat);
-      c.position.set(3.3 + (i > 2 ? 0.02 : 0), 0.0225 + i * 0.027, -1.9);
+      c.position.set(4.1 + (i > 1 ? 0.02 : 0), 0.0225 + i * 0.027, -2.7);
       group.add(c);
     }
     for (const [sx, sz, r] of [
-      [3.7, -2.2, 0.4],
-      [3.05, -2.35, 1.1],
-      [3.55, -1.65, 2.3],
+      [4.5, -3.0, 0.4],
+      [3.8, -3.15, 1.1],
+      [4.35, -2.3, 2.3],
     ] as Array<[number, number, number]>) {
       const c = new THREE.Mesh(coinGeom, goldMat);
       c.position.set(sx, 0.013, sz);
@@ -423,12 +495,12 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
     }
 
     // Rolled parchment, left-back.
-    const scrollGeom = new THREE.CylinderGeometry(0.09, 0.09, 1.15, 12);
+    const scrollGeom = new THREE.CylinderGeometry(0.08, 0.08, 1.05, 12);
     track(scrollGeom);
     const scroll = new THREE.Mesh(scrollGeom, parchmentMat);
     scroll.rotation.z = Math.PI / 2;
-    scroll.rotation.y = 0.45;
-    scroll.position.set(-3.4, 0.09, -2.3);
+    scroll.rotation.y = 0.5;
+    scroll.position.set(-4.3, 0.08, -3.1);
     scroll.castShadow = true;
     group.add(scroll);
   }
@@ -436,19 +508,29 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   // ==========================================================================
   // DUST MOTES — floating in the warm light. Additive points, slow drift.
   // ==========================================================================
-  const MOTE_COUNT = 90;
+  const MOTE_COUNT = 54;
   const moteBase = new Float32Array(MOTE_COUNT * 3);
   const motePos = new Float32Array(MOTE_COUNT * 3);
   for (let i = 0; i < MOTE_COUNT; i++) {
-    // Cluster motes where the light lives: above the table and near the fire.
-    const nearFire = i % 3 === 0;
-    moteBase[i * 3] = nearFire
-      ? -6.2 + (Math.random() - 0.5) * 3
-      : (Math.random() - 0.5) * 9;
-    moteBase[i * 3 + 1] = 0.5 + Math.random() * 4.5;
-    moteBase[i * 3 + 2] = nearFire
-      ? -11 + Math.random() * 2.5
-      : -2 + (Math.random() - 0.5) * 7;
+    // Motes live ONLY where light lives — fire, chandelier, table candles.
+    // Scattered over the whole table they read as specks on the wood.
+    const cluster = i % 3;
+    if (cluster === 0) {
+      // fireplace column
+      moteBase[i * 3] = -6.2 + (Math.random() - 0.5) * 2.6;
+      moteBase[i * 3 + 1] = 0.4 + Math.random() * 3.2;
+      moteBase[i * 3 + 2] = -11.5 + Math.random() * 2.0;
+    } else if (cluster === 1) {
+      // chandelier halo
+      moteBase[i * 3] = (Math.random() - 0.5) * 3.0;
+      moteBase[i * 3 + 1] = 4.4 + Math.random() * 1.8;
+      moteBase[i * 3 + 2] = -2.5 + (Math.random() - 0.5) * 2.6;
+    } else {
+      // table-candle pool
+      moteBase[i * 3] = -4.5 + (Math.random() - 0.5) * 1.6;
+      moteBase[i * 3 + 1] = 0.4 + Math.random() * 1.4;
+      moteBase[i * 3 + 2] = 1.0 + (Math.random() - 0.5) * 1.6;
+    }
   }
   motePos.set(moteBase);
   const moteGeom = track(new THREE.BufferGeometry());
@@ -456,9 +538,9 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   const moteMat = track(
     new THREE.PointsMaterial({
       color: 0xffc890,
-      size: 0.035,
+      size: 0.028,
       transparent: true,
-      opacity: 0.55,
+      opacity: 0.28,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       sizeAttenuation: true,
@@ -487,7 +569,7 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
     for (let i = 0; i < fire.sprites.length; i++) {
       const s = fire.sprites[i]!;
       const f = flicker(time, 3.1, i * 2.4);
-      const base = i === 0 ? 1.7 : i === 1 ? 1.15 : 0.95;
+      const base = i === 0 ? 2.1 : i === 1 ? 1.4 : 1.2;
       s.scale.set(base * 0.6 * (0.9 + f * 0.2), base * (0.85 + f * 0.3), 1);
       (s.material as THREE.SpriteMaterial).opacity = 0.6 + f * 0.35;
     }
@@ -504,7 +586,7 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
     for (let i = 0; i < tableCandles.sprites.length; i++) {
       const s = tableCandles.sprites[i]!;
       const f = flicker(time, 5.4, i * 1.9 + 4.2);
-      s.scale.set(0.3 * 0.6 * (0.85 + f * 0.3), 0.3 * (0.8 + f * 0.45), 1);
+      s.scale.set(0.26 * 0.6 * (0.85 + f * 0.3), 0.26 * (0.8 + f * 0.45), 1);
     }
     // Motes: slow figure-eight drift around each base point.
     for (let i = 0; i < MOTE_COUNT; i++) {

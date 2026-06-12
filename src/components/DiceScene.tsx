@@ -227,12 +227,19 @@ const NUDGE_TORQUE_MAG = 0.25;
 // ---------------------------------------------------------------------------
 const TEXTURE_CACHE = new Map<string, THREE.Texture>();
 
+/**
+ * `repeat` is part of the cache key: THREE.Texture carries tiling on the
+ * texture object itself, so two materials wanting different repeats of
+ * the same image need two texture instances (image bytes still come from
+ * the browser HTTP cache; only the GPU upload duplicates).
+ */
 function getCachedTexture(
   url: string,
   srgb: boolean,
   onLoad: () => void,
+  repeat: [number, number] = [1, 1],
 ): THREE.Texture {
-  const key = `${url}|${srgb ? 's' : 'l'}`;
+  const key = `${url}|${srgb ? 's' : 'l'}|${repeat[0]}x${repeat[1]}`;
   const cached = TEXTURE_CACHE.get(key);
   if (cached) return cached;
   const tex = new THREE.TextureLoader().load(url, onLoad, undefined, () => {
@@ -243,6 +250,7 @@ function getCachedTexture(
   if (srgb) tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(repeat[0], repeat[1]);
   tex.anisotropy = 8;
   TEXTURE_CACHE.set(key, tex);
   return tex;
@@ -270,10 +278,10 @@ function buildScene(
   renderer.toneMappingExposure = 1.0;
 
   const scene = new THREE.Scene();
-  // A whisper of warm-black fog pushes the room's far half into gloom —
-  // the tavern recedes instead of ending. Backdrop plane opts out (fog:
-  // false) so the painted depth-glow above the paneling stays warm.
-  scene.fog = new THREE.Fog(0x070402, 9, 24);
+  // Warm-black fog starts past the ROOM's mid-depth — the fireplace and
+  // back wall must read clearly; only the corners drown. (The first cut
+  // at 9–24 fogged the entire room into a black band.)
+  scene.fog = new THREE.Fog(0x070402, 13, 34);
 
   // ---------- on-demand rendering (declared early — async texture/HDRI
   // loads arriving later need to dirty the frame) ----------
@@ -286,14 +294,77 @@ function buildScene(
   const requestRender = () => {
     if (renderPending < 2) renderPending = 2;
   };
-  // Cinematic angled camera. The look-at is raised above the tabletop so
-  // the upper third of the frame looks INTO the room (fireplace, beams,
-  // gloom) instead of terminating on an endless table plane — the
-  // "seated at the table" composition.
-  const CAM_LOOK = new THREE.Vector3(0, 0.75, -1.0);
-  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-  camera.position.set(0, 5.5, 6.5);
-  camera.lookAt(CAM_LOOK);
+  // ---------- the shot system ----------
+  // Fixed, hand-composed camera SHOTS with one eased transition per game
+  // beat — videogame camera language, zero continuous tracking:
+  //   SEATED — your eyes, sitting at the table: wider lens, just above
+  //            and behind the near edge, ~25° down-gaze. Tray center-low,
+  //            room fills the upper frame (fireplace / beams / shelf).
+  //   LEAN   — the throw beat: one quick lean-in over the dice, then
+  //            dead still. Eases back to SEATED when the tray clears.
+  // Transitions are 0.45 s easeOutCubic between fixed endpoints. Under
+  // reduced motion they hard-cut. Tray growth scales shot positions.
+  interface CameraShot {
+    pos: THREE.Vector3;
+    look: THREE.Vector3;
+  }
+  const SHOTS: Record<'seated' | 'lean', CameraShot> = {
+    seated: {
+      pos: new THREE.Vector3(0, 4.7, 7.6),
+      look: new THREE.Vector3(0, -0.3, -2.6),
+    },
+    lean: {
+      pos: new THREE.Vector3(0, 4.05, 6.4),
+      look: new THREE.Vector3(0, -0.5, -1.4),
+    },
+  };
+  const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 100);
+  let trayScale = 1;
+  // Live endpoints (shot × tray scale) and tween state.
+  const camFrom: CameraShot = {
+    pos: SHOTS.seated.pos.clone(),
+    look: SHOTS.seated.look.clone(),
+  };
+  const camTo: CameraShot = {
+    pos: SHOTS.seated.pos.clone(),
+    look: SHOTS.seated.look.clone(),
+  };
+  let camT = 1; // 1 = settled on camTo
+  const CAM_TWEEN_S = 0.45;
+  const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+  const _camLookNow = new THREE.Vector3();
+
+  const shotEndpoint = (name: 'seated' | 'lean'): CameraShot => ({
+    pos: SHOTS[name].pos.clone().multiplyScalar(trayScale),
+    look: SHOTS[name].look.clone(),
+  });
+
+  const cutToShot = (name: 'seated' | 'lean', instant: boolean) => {
+    const end = shotEndpoint(name);
+    const reduced =
+      typeof document !== 'undefined' &&
+      document.documentElement.getAttribute('data-reduced-motion') === 'true';
+    if (instant || reduced) {
+      camFrom.pos.copy(end.pos);
+      camFrom.look.copy(end.look);
+      camTo.pos.copy(end.pos);
+      camTo.look.copy(end.look);
+      camT = 1;
+      camera.position.copy(end.pos);
+      camera.lookAt(end.look);
+    } else {
+      camFrom.pos.copy(camera.position);
+      // Current look = lerp of previous endpoints; reuse camTo's look as
+      // the best available "where we're looking now".
+      camFrom.look.lerpVectors(camFrom.look, camTo.look, easeOutCubic(camT));
+      camTo.pos.copy(end.pos);
+      camTo.look.copy(end.look);
+      camT = 0;
+    }
+    requestRender();
+  };
+  camera.position.copy(SHOTS.seated.pos);
+  camera.lookAt(SHOTS.seated.look);
 
   // --- Skin-driven materials + lighting ---------------------------------
   // The resolver turns the SceneTheme's string IDs into concrete configs.
@@ -342,27 +413,28 @@ function buildScene(
     textures: SurfaceTextureSet | undefined,
   ) => {
     if (textures) {
-      const map = getCachedTexture(textures.map, true, requestRender);
-      map.repeat.set(textures.repeat[0], textures.repeat[1]);
-      mat.map = map;
-      if (textures.normalMap) {
-        const nor = getCachedTexture(textures.normalMap, false, requestRender);
-        nor.repeat.set(textures.repeat[0], textures.repeat[1]);
-        mat.normalMap = nor;
-      } else {
-        mat.normalMap = null;
-      }
-      if (textures.roughnessMap) {
-        const rgh = getCachedTexture(
-          textures.roughnessMap,
-          false,
-          requestRender,
-        );
-        rgh.repeat.set(textures.repeat[0], textures.repeat[1]);
-        mat.roughnessMap = rgh;
-      } else {
-        mat.roughnessMap = null;
-      }
+      mat.map = getCachedTexture(
+        textures.map,
+        true,
+        requestRender,
+        textures.repeat,
+      );
+      mat.normalMap = textures.normalMap
+        ? getCachedTexture(
+            textures.normalMap,
+            false,
+            requestRender,
+            textures.repeat,
+          )
+        : null;
+      mat.roughnessMap = textures.roughnessMap
+        ? getCachedTexture(
+            textures.roughnessMap,
+            false,
+            requestRender,
+            textures.repeat,
+          )
+        : null;
     } else {
       mat.map = null;
       mat.normalMap = null;
@@ -469,6 +541,16 @@ function buildScene(
   table.position.y = -0.06;
   table.receiveShadow = true;
   scene.add(table);
+  // Edge skirts — the tabletop reads as a slab of furniture with
+  // thickness, not a floating plane. Far edge faces the room; near edge
+  // sits at the very bottom of the seated shot ("your" side).
+  const skirtGeom = new THREE.BoxGeometry(19, 0.6, 0.28);
+  const skirtFar = new THREE.Mesh(skirtGeom, tableMat);
+  skirtFar.position.set(0, -0.36, -7.06);
+  scene.add(skirtFar);
+  const skirtNear = new THREE.Mesh(skirtGeom, tableMat);
+  skirtNear.position.set(0, -0.36, 7.06);
+  scene.add(skirtNear);
 
   // --- Dice tray: leather floor inside, wooden rails around ---
   const trayFloorGeom = new THREE.PlaneGeometry(4.2, 4.2);
@@ -529,6 +611,9 @@ function buildScene(
     if (w === 0 || h === 0) return;
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
+    // Wider vertical fov on narrow/portrait viewports so the seated shot
+    // keeps the tray AND the room in frame on phones.
+    camera.fov = camera.aspect < 0.75 ? 58 : 52;
     camera.updateProjectionMatrix();
     requestRender();
   };
@@ -576,6 +661,8 @@ function buildScene(
     if (!req) {
       lastAppliedThrowToken = null;
       removeActiveThrow();
+      // Clear beat: sit back from the lean.
+      cutToShot('seated', false);
       return;
     }
     if (req.token === lastAppliedThrowToken) return;
@@ -589,6 +676,8 @@ function buildScene(
     // the new bounds. Resizing only ever happens here, with the tray
     // empty, so settled dice are never caught outside a shrinking wall.
     applyTrayLayout(trayInnerFor(req.quantity));
+    // Throw beat: one lean-in over the dice, then hold.
+    cutToShot('lean', false);
 
     const dice: ThrowDie[] = [];
     for (let i = 0; i < req.quantity; i++) {
@@ -620,11 +709,17 @@ function buildScene(
       // physics dice are the source of truth — ignore unless it's a clear
       if (result === null) {
         removeActiveThrow();
+        cutToShot('seated', false);
       }
       return;
     }
     removeLegacy();
-    if (!result) return;
+    if (!result) {
+      cutToShot('seated', false);
+      return;
+    }
+    // Legacy/RNG roll still gets the lean beat.
+    cutToShot('lean', false);
     const positions = computeGridPositions(result.individualResults.length);
     for (let i = 0; i < result.individualResults.length; i++) {
       const die = physics
@@ -650,7 +745,6 @@ function buildScene(
   const TRAY_BASE_INNER = 2.1;
   const TRAY_MAX_INNER = 3.4;
   const RAIL_T = 0.22;
-  const CAM_BASE_POS = new THREE.Vector3(0, 5.5, 6.5);
   let trayInner = TRAY_BASE_INNER;
 
   /** Tray half-width needed for a given dice count. ≤4 dice use the
@@ -684,12 +778,10 @@ function buildScene(
     railWest.position.x = -inner - RAIL_T / 2;
     // Physics walls follow the visuals exactly.
     physics?.rebuildWalls(inner);
-    // One instant camera framing per resize — scaled along the same
-    // cinematic direction so the whole tray stays in frame. This is a
-    // set, not an animation: between rolls of the same size nothing
-    // moves at all.
-    camera.position.copy(CAM_BASE_POS).multiplyScalar(s);
-    camera.lookAt(CAM_LOOK);
+    // The camera doesn't move here — the shot system picks up the new
+    // trayScale on its next beat (setThrowRequest cuts to LEAN right
+    // after this), so the framing change rides inside one eased move.
+    trayScale = s;
     requestRender();
   };
 
@@ -770,6 +862,16 @@ function buildScene(
       }
     }
 
+    // ---- camera shot tween (one eased move per beat, then dead still) ----
+    if (camT < 1) {
+      camT = Math.min(1, camT + delta / CAM_TWEEN_S);
+      const e = easeOutCubic(camT);
+      camera.position.lerpVectors(camFrom.pos, camTo.pos, e);
+      _camLookNow.lerpVectors(camFrom.look, camTo.look, e);
+      camera.lookAt(_camLookNow);
+      requestRender();
+    }
+
     if (activeThrow) {
       if (!activeThrow.committed) {
         const elapsed = sceneTime - activeThrow.startTime;
@@ -839,6 +941,7 @@ function buildScene(
     world.dispose();
     physics?.dispose();
     tableGeom.dispose();
+    skirtGeom.dispose();
     tableMat.dispose();
     trayFloorGeom.dispose();
     trayFloorMat.dispose();
