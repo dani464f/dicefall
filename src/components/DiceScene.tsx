@@ -495,95 +495,14 @@ function buildScene(
   top.position.copy(resolved.lighting.top.position);
   scene.add(top);
 
-  // --- Cinematic backplate (Soul Cinema film still) ---
-  // The ROOM is a 2K film-graded plate mounted perpendicular to the
-  // SEATED view axis (classic backplate) so the image maps ~1:1 onto the
-  // frame: painted fireplace mid-left, chandelier top-center, beams,
-  // haze. The live 3D table occludes the frame below v≈0.43, so the
-  // plate's upper band is what reads. Sized with overscan so the LEAN
-  // shot and portrait fovs never reveal an edge. fog:false (the plate
-  // carries its own atmosphere), toneMapped:false (pre-graded).
-  const PLATE_DIST = 22;
-  const PLATE_OVERSCAN = 1.3;
-  const _plateDir = new THREE.Vector3()
-    .copy(SHOTS.seated.look)
-    .sub(SHOTS.seated.pos)
-    .normalize();
-  let plateMesh: THREE.Mesh | null = null;
-
-  /** Convert plate-image UV (0..1, v down from top) to a world position
-   *  on the (unscaled) plate — used to anchor live FX onto painted
-   *  features (the fireplace). */
-  const plateUVToWorld = (
-    u: number,
-    v: number,
-    towardCamera = 0,
-  ): THREE.Vector3 => {
-    const h = 2 * Math.tan(THREE.MathUtils.degToRad(52 / 2)) * PLATE_DIST;
-    const w = (h * 16) / 9;
-    const center = SHOTS.seated.pos
-      .clone()
-      .addScaledVector(_plateDir, PLATE_DIST);
-    const right = new THREE.Vector3(1, 0, 0);
-    const up = new THREE.Vector3().crossVectors(_plateDir, right).negate();
-    return center
-      .addScaledVector(right, (u - 0.5) * w)
-      .addScaledVector(up, (0.5 - v) * h)
-      .addScaledVector(_plateDir, -towardCamera);
-  };
-
-  const fitPlate = () => {
-    if (!plateMesh) return;
-    const s = trayScale;
-    const center = SHOTS.seated.pos
-      .clone()
-      .multiplyScalar(s)
-      .addScaledVector(_plateDir, PLATE_DIST * s);
-    plateMesh.position.copy(center);
-    plateMesh.lookAt(SHOTS.seated.pos.clone().multiplyScalar(s));
-    const h =
-      2 * Math.tan(THREE.MathUtils.degToRad(52 / 2)) * PLATE_DIST * s;
-    const w = (h * 16) / 9;
-    plateMesh.scale.set(w * PLATE_OVERSCAN, h * PLATE_OVERSCAN, 1);
-    requestRender();
-  };
-
-  {
-    new THREE.TextureLoader().load(
-      '/backdrop/plate.webp',
-      (tex) => {
-        if (sceneDisposed) {
-          tex.dispose();
-          return;
-        }
-        tex.colorSpace = THREE.SRGBColorSpace;
-        tex.anisotropy = 4;
-        const plateGeom = new THREE.PlaneGeometry(1, 1); // sized by fitPlate
-        const plateMat = new THREE.MeshBasicMaterial({
-          map: tex,
-          fog: false,
-          toneMapped: false,
-        });
-        plateMesh = new THREE.Mesh(plateGeom, plateMat);
-        scene.add(plateMesh);
-        fitPlate();
-      },
-      undefined,
-      () => {
-        // No plate asset → the fogged void. Fine.
-      },
-    );
-  }
-
-  // --- Near-field tavern life (flames over the plate, table dressing) ---
-  // The fire anchor maps the plate's painted hearth (image UV, measured
-  // off the chosen Soul Cinema still) into world space so the live flame
-  // sprites sit exactly on the painted glow, just above the 3D table's
-  // occlusion line.
+  // --- The ENTIRE tavern as real 3D geometry ---
+  // Full room: walls, floor, timbered ceiling, fireplace on the left
+  // wall, bar along the back, moonlit windows on the right, furniture in
+  // the gloom. Built for camera freedom — any future shot angle is a
+  // real angle, no backplate to break parallax.
   const world = buildTavernWorld({
     getTexture: getCachedTexture,
     requestRender,
-    fireSpriteAnchor: plateUVToWorld(0.215, 0.46, 1.5),
   });
   scene.add(world.group);
 
@@ -868,8 +787,6 @@ function buildScene(
     // trayScale on its next beat (setThrowRequest cuts to LEAN right
     // after this), so the framing change rides inside one eased move.
     trayScale = s;
-    fitPlate();
-    world.setAnchorScale(s);
     requestRender();
   };
 
