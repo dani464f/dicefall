@@ -497,7 +497,35 @@ function buildScene(
   const _bbSize = new THREE.Vector3();
   const _camDesired = new THREE.Vector3();
 
-  const updateCameraTarget = () => {
+  const fitDistance = (spread: number): number => {
+    // Fit a half-extent (plus one die radius of margin) in both the
+    // vertical fov and the aspect-corrected horizontal fov.
+    const halfV = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const distV = spread / halfV;
+    const distH = spread / (halfV * Math.max(camera.aspect, 0.55));
+    return THREE.MathUtils.clamp(
+      Math.max(distV, distH) * 1.18,
+      CAM_MIN_DIST,
+      CAM_MAX_DIST,
+    );
+  };
+
+  /**
+   * Phase-based framing — this is what keeps the camera from hunting:
+   *
+   *   ACTION (dice tumbling): hold the wide establishing shot. Look-at
+   *   pinned to the tray centre, distance = at least the default, widened
+   *   further only if the pile genuinely needs it (and never tightened
+   *   mid-action). Tumbling dice reshape their bounding box every frame;
+   *   chasing it is what read as "back and forth".
+   *
+   *   SETTLED (everything at rest): one deliberate push-in to frame the
+   *   resting pile. The bodies are asleep so the target is static by
+   *   construction. A small deadband ignores sub-0.3-unit retargets.
+   *
+   *   EMPTY: glide back to the default establishing view.
+   */
+  const updateCameraTarget = (inAction: boolean) => {
     _bb.makeEmpty();
     if (activeThrow) {
       for (const d of activeThrow.dice) {
@@ -514,24 +542,41 @@ function buildScene(
     }
     _bb.getCenter(_bbCenter);
     _bb.getSize(_bbSize);
-    // Look at the pile's floor-level footprint, gently clamped so the
-    // camera never chases a die pressed into a far corner off-frame.
-    camTargetLook.set(
-      THREE.MathUtils.clamp(_bbCenter.x, -1.2, 1.2),
-      0,
-      THREE.MathUtils.clamp(_bbCenter.z, -1.2, 1.2),
-    );
-    // Fit the pile's half-extent (plus one die radius of margin) in both
-    // the vertical fov and the aspect-corrected horizontal fov.
+
+    if (inAction) {
+      // Hold the establishing shot. Spread is measured around the tray
+      // origin (not the moving centroid) so the only possible adjustment
+      // is a monotonic widen for genuinely oversized piles.
+      camTargetLook.set(0, 0, 0);
+      const spreadFromOrigin =
+        Math.max(
+          Math.abs(_bb.min.x),
+          Math.abs(_bb.max.x),
+          Math.abs(_bb.min.z),
+          Math.abs(_bb.max.z),
+        ) + 0.95;
+      camTargetDist = Math.max(
+        CAM_DEFAULT_DIST,
+        camTargetDist,
+        fitDistance(spreadFromOrigin),
+      );
+      return;
+    }
+
+    // Settled: frame the resting pile. Deadband so a freshly computed
+    // target within 0.3 units of the current one doesn't retrigger motion.
+    const nextLookX = THREE.MathUtils.clamp(_bbCenter.x, -1.2, 1.2);
+    const nextLookZ = THREE.MathUtils.clamp(_bbCenter.z, -1.2, 1.2);
     const spread = Math.max(_bbSize.x, _bbSize.z) / 2 + 0.95;
-    const halfV = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-    const distV = spread / halfV;
-    const distH = spread / (halfV * Math.max(camera.aspect, 0.55));
-    camTargetDist = THREE.MathUtils.clamp(
-      Math.max(distV, distH) * 1.18,
-      CAM_MIN_DIST,
-      CAM_MAX_DIST,
-    );
+    const nextDist = fitDistance(spread);
+    const meaningful =
+      Math.abs(nextDist - camTargetDist) > 0.3 ||
+      Math.abs(nextLookX - camTargetLook.x) > 0.25 ||
+      Math.abs(nextLookZ - camTargetLook.z) > 0.25;
+    if (meaningful) {
+      camTargetLook.set(nextLookX, 0, nextLookZ);
+      camTargetDist = nextDist;
+    }
   };
 
   // ---------- render loop ----------
@@ -590,20 +635,23 @@ function buildScene(
     }
 
     // ---- camera follow ----
-    updateCameraTarget();
+    const inAction = throwNeedsSim || legacyNeedsSim || tweenAnimating;
+    updateCameraTarget(inAction);
     _camDesired.copy(camTargetLook).addScaledVector(CAM_DIR, camTargetDist);
     const camOffsetSq =
       camera.position.distanceToSquared(_camDesired) +
       camLook.distanceToSquared(camTargetLook);
     if (camOffsetSq > 1e-6) {
       // Snap instead of glide under reduced motion (the attribute App
-      // mirrors onto <html>); otherwise exponential damping with a ~¼ s
-      // time constant — fast enough to track a moving pile, slow enough
-      // to read as a camera operator, not a cut.
+      // mirrors onto <html>). Otherwise two damping speeds: pulling OUT
+      // is brisk (dice must never escape the frame), pushing IN is a
+      // slow, deliberate move that only happens once everything is at
+      // rest — one out, one in per roll, never a hunt.
       const snap =
         document.documentElement.getAttribute('data-reduced-motion') ===
         'true';
-      const k = snap ? 1 : 1 - Math.exp(-delta * 4);
+      const pullingOut = camTargetDist > camera.position.distanceTo(camLook);
+      const k = snap ? 1 : 1 - Math.exp(-delta * (pullingOut ? 5 : 1.8));
       camera.position.lerp(_camDesired, k);
       camLook.lerp(camTargetLook, k);
       camera.lookAt(camLook);
