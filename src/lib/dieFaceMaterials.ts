@@ -318,12 +318,19 @@ export function buildFaceBakedDie(
   }
   geom.computeVertexNormals();
 
+  // Physical material with clearcoat — the dice read as lacquered cast
+  // resin. The clearcoat layer picks up the warm HDRI hotspots as sharp
+  // glints while the base stays deep and dark. envMapIntensity below 1
+  // keeps the gold numerals from washing out.
   const materials = entries.map(
     (entry) =>
-      new THREE.MeshStandardMaterial({
+      new THREE.MeshPhysicalMaterial({
         map: createTriangleFaceTexture(entry.value),
-        roughness: 0.32,
-        metalness: 0.45,
+        roughness: 0.34,
+        metalness: 0.42,
+        clearcoat: 0.6,
+        clearcoatRoughness: 0.22,
+        envMapIntensity: 0.9,
       }),
   );
 

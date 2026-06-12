@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { loadRapier, type Rapier } from '../lib/physics';
 import { getUpwardFaceValue } from '../lib/faceDetection';
 import { createD6Materials } from '../lib/diceFaceTextures';
@@ -11,6 +12,7 @@ import {
 import {
   resolveSceneTheme,
   type ResolvedSceneTheme,
+  type SurfaceTextureSet,
 } from '../lib/skins/sceneResolver';
 import { diceAudio } from '../lib/audio/diceAudio';
 import { diceHaptics } from '../lib/haptics/diceHaptics';
@@ -217,6 +219,34 @@ const NUDGE_MAX = 2;
 const NUDGE_IMPULSE_Y = 0.7;
 const NUDGE_TORQUE_MAG = 0.25;
 
+// ---------------------------------------------------------------------------
+// Shared texture cache — surfaces (and the backdrop) reuse loaded textures
+// across scene rebuilds (StrictMode double-mount, skin switches). Never
+// disposed; total GPU residency is a few MB.
+// ---------------------------------------------------------------------------
+const TEXTURE_CACHE = new Map<string, THREE.Texture>();
+
+function getCachedTexture(
+  url: string,
+  srgb: boolean,
+  onLoad: () => void,
+): THREE.Texture {
+  const key = `${url}|${srgb ? 's' : 'l'}`;
+  const cached = TEXTURE_CACHE.get(key);
+  if (cached) return cached;
+  const tex = new THREE.TextureLoader().load(url, onLoad, undefined, () => {
+    // 404 / decode failure — leave the material flat-colored. The console
+    // notes it; the scene must never crash over a missing map.
+    console.warn(`[DiceScene] texture failed to load: ${url}`);
+  });
+  if (srgb) tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 8;
+  TEXTURE_CACHE.set(key, tex);
+  return tex;
+}
+
 function buildScene(
   mount: HTMLDivElement,
   rapier: Rapier | null,
@@ -228,8 +258,30 @@ function buildScene(
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  // Filmic tone mapping is the single biggest "game engine" signal — it
+  // rolls highlights off gently (candle glints stop clipping to white)
+  // and deepens the shadow floor. Light intensities below are tuned FOR
+  // this curve; changing the mapping means re-tuning them.
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.12;
 
   const scene = new THREE.Scene();
+  // A whisper of warm-black fog seats the table into the backdrop and
+  // swallows the table plane's far edge. Backdrop plane opts out (fog:
+  // false on its material) so the painted image stays unfogged.
+  scene.fog = new THREE.Fog(0x070402, 10, 26);
+
+  // ---------- on-demand rendering (declared early — async texture/HDRI
+  // loads arriving later need to dirty the frame) ----------
+  // The scene is fully static between dice movements, so re-rendering
+  // identical frames at 60 fps just burns GPU/battery. `renderPending`
+  // counts down to 0 and the loop skips rendering until something dirties
+  // the scene again. 2 frames per dirty event so changes landing between
+  // RAF ticks (resize buffer swap, material mutation) settle visibly.
+  let renderPending = 3;
+  const requestRender = () => {
+    if (renderPending < 2) renderPending = 2;
+  };
   // Cinematic top-down angled camera per the tavern brief.
   const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
   camera.position.set(0, 5.5, 6.5);
@@ -241,6 +293,75 @@ function buildScene(
   // `intensity` / `position` are mutated in setSceneTheme when the skin
   // changes — no scene rebuild required.
   let resolved: ResolvedSceneTheme = resolveSceneTheme(initialTheme);
+
+  // --- Image-based lighting -------------------------------------------------
+  // A 1K warm interior HDRI (billiard hall — dark room, bright tungsten
+  // lamps) feeds scene.environment via PMREM. This is what makes the
+  // lacquered dice GLINT as they tumble: high-contrast warm hotspots
+  // reflected in the clearcoat. Per-skin strength via envIntensity.
+  let sceneDisposed = false;
+  scene.environmentIntensity = resolved.lighting.envIntensity;
+  {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    pmrem.compileEquirectangularShader();
+    new HDRLoader().load(
+      '/hdri/billiard_hall_1k.hdr',
+      (hdrTex) => {
+        if (sceneDisposed) {
+          hdrTex.dispose();
+          pmrem.dispose();
+          return;
+        }
+        const envMap = pmrem.fromEquirectangular(hdrTex).texture;
+        scene.environment = envMap;
+        hdrTex.dispose();
+        pmrem.dispose();
+        requestRender();
+      },
+      undefined,
+      () => {
+        // HDRI missing → lights-only. Darker but fully functional.
+        console.warn('[DiceScene] HDRI failed to load; IBL disabled');
+        pmrem.dispose();
+      },
+    );
+  }
+
+  /** Apply (or clear) a surface's PBR texture set. Map presence changes
+   *  require a shader recompile — hence needsUpdate. */
+  const applySurfaceTextures = (
+    mat: THREE.MeshStandardMaterial,
+    textures: SurfaceTextureSet | undefined,
+  ) => {
+    if (textures) {
+      const map = getCachedTexture(textures.map, true, requestRender);
+      map.repeat.set(textures.repeat[0], textures.repeat[1]);
+      mat.map = map;
+      if (textures.normalMap) {
+        const nor = getCachedTexture(textures.normalMap, false, requestRender);
+        nor.repeat.set(textures.repeat[0], textures.repeat[1]);
+        mat.normalMap = nor;
+      } else {
+        mat.normalMap = null;
+      }
+      if (textures.roughnessMap) {
+        const rgh = getCachedTexture(
+          textures.roughnessMap,
+          false,
+          requestRender,
+        );
+        rgh.repeat.set(textures.repeat[0], textures.repeat[1]);
+        mat.roughnessMap = rgh;
+      } else {
+        mat.roughnessMap = null;
+      }
+    } else {
+      mat.map = null;
+      mat.normalMap = null;
+      mat.roughnessMap = null;
+    }
+    mat.needsUpdate = true;
+  };
 
   const ambient = new THREE.AmbientLight(
     resolved.lighting.ambient.color,
@@ -287,6 +408,38 @@ function buildScene(
   top.position.copy(resolved.lighting.top.position);
   scene.add(top);
 
+  // --- Painted backdrop (Higgsfield tavern plate) ---
+  // Mounted on a large plane behind the table. Camera direction is fixed
+  // (only distance changes on tray resize) so a static plane reads
+  // correctly at every framing. fog:false — the painting carries its own
+  // depth; toneMapped:false — the plate is pre-graded.
+  {
+    new THREE.TextureLoader().load(
+      '/backdrop/tavern.webp',
+      (tex) => {
+        if (sceneDisposed) {
+          tex.dispose();
+          return;
+        }
+        tex.colorSpace = THREE.SRGBColorSpace;
+        const backdropGeom = new THREE.PlaneGeometry(38, 21.4);
+        const backdropMat = new THREE.MeshBasicMaterial({
+          map: tex,
+          fog: false,
+          toneMapped: false,
+        });
+        const backdrop = new THREE.Mesh(backdropGeom, backdropMat);
+        backdrop.position.set(0, 7.5, -12);
+        scene.add(backdrop);
+        requestRender();
+      },
+      undefined,
+      () => {
+        // No backdrop asset → the fogged void. Fine.
+      },
+    );
+  }
+
   // --- Tabletop (extends past the camera frustum) ---
   const tableGeom = new THREE.PlaneGeometry(22, 20);
   const tableMat = new THREE.MeshStandardMaterial({
@@ -294,6 +447,7 @@ function buildScene(
     roughness: resolved.table.roughness,
     metalness: resolved.table.metalness,
   });
+  applySurfaceTextures(tableMat, resolved.table.textures);
   const table = new THREE.Mesh(tableGeom, tableMat);
   table.rotation.x = -Math.PI / 2;
   table.position.y = -0.06;
@@ -307,6 +461,7 @@ function buildScene(
     roughness: resolved.trayFloor.roughness,
     metalness: resolved.trayFloor.metalness,
   });
+  applySurfaceTextures(trayFloorMat, resolved.trayFloor.textures);
   const trayFloor = new THREE.Mesh(trayFloorGeom, trayFloorMat);
   trayFloor.rotation.x = -Math.PI / 2;
   trayFloor.position.y = 0;
@@ -318,6 +473,7 @@ function buildScene(
     roughness: resolved.trayRail.roughness,
     metalness: resolved.trayRail.metalness,
   });
+  applySurfaceTextures(railMat, resolved.trayRail.textures);
   const railH = 0.35;
   const railT = 0.22;
   const inner = 2.1;
@@ -350,18 +506,6 @@ function buildScene(
   renderer.domElement.style.width = '100%';
   renderer.domElement.style.height = '100%';
   mount.appendChild(renderer.domElement);
-
-  // ---------- on-demand rendering ----------
-  // The scene is fully static between dice movements (lights and materials
-  // only change via setSceneTheme), so re-rendering identical frames at
-  // 60 fps just burns GPU/battery. `renderPending` counts down to 0 and the
-  // loop skips renderer.render() until something dirties the scene again.
-  // We render 2 frames per dirty event (not 1) so changes that land between
-  // RAF ticks (resize buffer swap, material mutation) settle visibly.
-  let renderPending = 3;
-  const requestRender = () => {
-    if (renderPending < 2) renderPending = 2;
-  };
 
   const updateSize = () => {
     const w = mount.clientWidth;
@@ -649,6 +793,7 @@ function buildScene(
   raf = requestAnimationFrame(animate);
 
   const cleanup = () => {
+    sceneDisposed = true;
     cancelAnimationFrame(raf);
     ro.disconnect();
     removeActiveThrow();
@@ -690,12 +835,16 @@ function buildScene(
     tableMat.color.setHex(next.table.color);
     tableMat.roughness = next.table.roughness;
     tableMat.metalness = next.table.metalness;
+    applySurfaceTextures(tableMat, next.table.textures);
     trayFloorMat.color.setHex(next.trayFloor.color);
     trayFloorMat.roughness = next.trayFloor.roughness;
     trayFloorMat.metalness = next.trayFloor.metalness;
+    applySurfaceTextures(trayFloorMat, next.trayFloor.textures);
     railMat.color.setHex(next.trayRail.color);
     railMat.roughness = next.trayRail.roughness;
     railMat.metalness = next.trayRail.metalness;
+    applySurfaceTextures(railMat, next.trayRail.textures);
+    scene.environmentIntensity = next.lighting.envIntensity;
     requestRender();
   };
 

@@ -135,16 +135,21 @@ function createD6FaceTexture(value: number, size = 256): THREE.CanvasTexture {
  * Lifetime note: these are intentionally never disposed. Six 256px canvas
  * textures ≈ 1.5 MB GPU memory, kept warm for instant re-rolls.
  */
-let SHARED_D6_MATERIALS: THREE.MeshStandardMaterial[] | null = null;
+let SHARED_D6_MATERIALS: THREE.MeshPhysicalMaterial[] | null = null;
 
-export function createD6Materials(): THREE.MeshStandardMaterial[] {
+export function createD6Materials(): THREE.MeshPhysicalMaterial[] {
   if (SHARED_D6_MATERIALS) return SHARED_D6_MATERIALS;
   SHARED_D6_MATERIALS = D6_FACE_VALUES_BY_AXIS.map(
     (value) =>
-      new THREE.MeshStandardMaterial({
+      // Clearcoat to match the polyhedral dice — lacquered bone-black cube
+      // with warm glints from the environment map.
+      new THREE.MeshPhysicalMaterial({
         map: createD6FaceTexture(value),
-        roughness: 0.5,
-        metalness: 0.1,
+        roughness: 0.48,
+        metalness: 0.12,
+        clearcoat: 0.55,
+        clearcoatRoughness: 0.25,
+        envMapIntensity: 0.85,
       }),
   );
   return SHARED_D6_MATERIALS;

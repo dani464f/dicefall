@@ -13,22 +13,41 @@ import type { SceneTheme } from '../../types/skins';
  * resolver pure and easy to unit-test.
  */
 
+/**
+ * Optional PBR texture set for a surface. Paths are public/ URLs. When a
+ * preset has no `textures`, the surface renders flat-colored exactly as
+ * before — Obsidian Court and Arcane Vault rely on this fallback until
+ * their own texture sets land (Phase E).
+ *
+ * `repeat` is [u, v] tiling. Diffuse loads as sRGB; normal/roughness stay
+ * linear (three.js default).
+ */
+export interface SurfaceTextureSet {
+  map: string;
+  normalMap?: string;
+  roughnessMap?: string;
+  repeat: [number, number];
+}
+
 export interface TableMaterialConfig {
   color: number;
   roughness: number;
   metalness: number;
+  textures?: SurfaceTextureSet;
 }
 
 export interface TrayFloorMaterialConfig {
   color: number;
   roughness: number;
   metalness: number;
+  textures?: SurfaceTextureSet;
 }
 
 export interface TrayRailMaterialConfig {
   color: number;
   roughness: number;
   metalness: number;
+  textures?: SurfaceTextureSet;
 }
 
 export interface DiceMaterialConfig {
@@ -43,6 +62,9 @@ export interface LightingConfig {
   key: { color: number; intensity: number; position: THREE.Vector3 };
   rim: { color: number; intensity: number; position: THREE.Vector3 };
   top: { color: number; intensity: number; position: THREE.Vector3 };
+  /** scene.environment (IBL) strength for this skin. ~0.5 = subtle warm
+   *  reflections; 0 disables IBL contribution entirely. */
+  envIntensity: number;
 }
 
 export interface ResolvedSceneTheme {
@@ -56,19 +78,48 @@ export interface ResolvedSceneTheme {
 // ---------- Table / tray / dice material presets ----------------------------
 
 const TABLE_PRESETS: Record<string, TableMaterialConfig> = {
-  'wood.walnut': { color: 0x18100a, roughness: 0.92, metalness: 0.05 },
+  'wood.walnut': {
+    // Color acts as a tint multiplier over the diffuse map — keep it well
+    // above the old flat value or the grain drowns in black.
+    color: 0x8a6a4a,
+    roughness: 0.92,
+    metalness: 0.05,
+    textures: {
+      map: '/textures/wood_diff.webp',
+      normalMap: '/textures/wood_nor.webp',
+      repeat: [3.2, 3.0],
+    },
+  },
   'stone.obsidian': { color: 0x0a0c14, roughness: 0.55, metalness: 0.2 },
   'stone.malachite': { color: 0x0c1b14, roughness: 0.55, metalness: 0.15 },
 };
 
 const TRAY_FLOOR_PRESETS: Record<string, TrayFloorMaterialConfig> = {
-  'leather.dark': { color: 0x1c0d06, roughness: 0.88, metalness: 0.02 },
+  'leather.dark': {
+    color: 0x6a4530,
+    roughness: 0.88,
+    metalness: 0.02,
+    textures: {
+      map: '/textures/leather_diff.webp',
+      normalMap: '/textures/leather_nor.webp',
+      repeat: [2.2, 2.2],
+    },
+  },
   'velvet.midnight': { color: 0x121730, roughness: 0.85, metalness: 0.0 },
   'leather.emerald': { color: 0x0d2018, roughness: 0.86, metalness: 0.02 },
 };
 
 const TRAY_RAIL_PRESETS: Record<string, TrayRailMaterialConfig> = {
-  'leather.dark': { color: 0x3b2114, roughness: 0.7, metalness: 0.08 },
+  'leather.dark': {
+    color: 0x9a6a45,
+    roughness: 0.7,
+    metalness: 0.08,
+    textures: {
+      map: '/textures/wood_diff.webp',
+      normalMap: '/textures/wood_nor.webp',
+      repeat: [1.6, 0.35],
+    },
+  },
   'velvet.midnight': { color: 0x2a3458, roughness: 0.7, metalness: 0.12 },
   'leather.emerald': { color: 0x1f3a2a, roughness: 0.72, metalness: 0.08 },
 };
@@ -100,6 +151,7 @@ const LIGHTING_PRESETS: Record<string, LightingConfig> = {
       intensity: 1.4,
       position: new THREE.Vector3(0.5, 8, 1),
     },
+    envIntensity: 0.55,
   },
   'court.sapphire': {
     ambient: { color: 0x506488, intensity: 0.55 },
@@ -119,6 +171,9 @@ const LIGHTING_PRESETS: Record<string, LightingConfig> = {
       intensity: 1.3,
       position: new THREE.Vector3(0.5, 8, 1),
     },
+    // The HDRI is warm tungsten — keep its pull low on the cool skins so
+    // it reads as faint ambience, not a colour cast.
+    envIntensity: 0.3,
   },
   'vault.rune': {
     ambient: { color: 0x4a7a5e, intensity: 0.55 },
@@ -138,6 +193,7 @@ const LIGHTING_PRESETS: Record<string, LightingConfig> = {
       intensity: 1.3,
       position: new THREE.Vector3(0.5, 8, 1),
     },
+    envIntensity: 0.3,
   },
 };
 
