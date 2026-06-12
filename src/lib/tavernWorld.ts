@@ -49,46 +49,128 @@ const WALL_Z_BACK = -14;
 const WALL_Z_FRONT = 16;
 
 // ---------------------------------------------------------------------------
-// Flame sprite texture — radial gradient painted once, shared by every flame.
+// FLIPBOOK FLAMES — a 4×4 procedural sprite sheet (16 frames of layered
+// teardrop gradients with per-frame turbulence). Cycling frames makes the
+// flame SHAPE dance — the difference between "glowing dot that pulses"
+// and "fire". The atlas canvas is painted once; each sprite gets its own
+// texture clone (clones share pixels, carry independent UV transforms).
 // ---------------------------------------------------------------------------
-let FLAME_TEX: THREE.CanvasTexture | null = null;
-function getFlameTexture(): THREE.CanvasTexture {
-  if (FLAME_TEX) return FLAME_TEX;
-  const size = 128;
+const FLIP_GRID = 4;
+const FLIP_FRAMES = FLIP_GRID * FLIP_GRID;
+let FLAME_ATLAS: HTMLCanvasElement | null = null;
+
+function getFlameAtlas(): HTMLCanvasElement {
+  if (FLAME_ATLAS) return FLAME_ATLAS;
+  const cell = 128;
+  const size = cell * FLIP_GRID;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
-  const g = ctx.createRadialGradient(
-    size / 2,
-    size * 0.6,
-    2,
-    size / 2,
-    size * 0.55,
-    size * 0.5,
-  );
-  g.addColorStop(0, 'rgba(255, 244, 214, 1)');
-  g.addColorStop(0.25, 'rgba(255, 196, 110, 0.95)');
-  g.addColorStop(0.55, 'rgba(255, 132, 38, 0.55)');
-  g.addColorStop(1, 'rgba(255, 80, 10, 0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, size, size);
-  FLAME_TEX = new THREE.CanvasTexture(canvas);
-  FLAME_TEX.colorSpace = THREE.SRGBColorSpace;
-  return FLAME_TEX;
+  // Deterministic per-frame "turbulence" from layered sines.
+  const jit = (f: number, k: number) =>
+    Math.sin(f * 2.39996 * k + k * 1.7) * 0.5 +
+    Math.sin(f * 1.13 * k + k * 0.43) * 0.5;
+  const blob = (
+    cx: number,
+    cy: number,
+    rx: number,
+    ry: number,
+    core: string,
+    mid: string,
+  ) => {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(rx, ry);
+    const g = ctx.createRadialGradient(0, 0.1, 0.02, 0, 0, 1);
+    g.addColorStop(0, core);
+    g.addColorStop(0.45, mid);
+    g.addColorStop(1, 'rgba(255, 70, 8, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, 1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  };
+  for (let f = 0; f < FLIP_FRAMES; f++) {
+    const ox = (f % FLIP_GRID) * cell;
+    const oy = Math.floor(f / FLIP_GRID) * cell;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(ox, oy, cell, cell);
+    ctx.clip();
+    ctx.translate(ox + cell / 2, oy + cell * 0.62);
+    // Body — broad orange teardrop, swaying.
+    blob(
+      jit(f, 1) * 7,
+      0,
+      cell * (0.3 + jit(f, 2) * 0.04),
+      cell * (0.42 + jit(f, 3) * 0.06),
+      'rgba(255, 196, 110, 0.95)',
+      'rgba(255, 128, 36, 0.6)',
+    );
+    // Tongue — taller, narrower, leaning with the sway, rising per frame.
+    blob(
+      jit(f, 1) * 10 + jit(f, 5) * 4,
+      -cell * (0.16 + jit(f, 4) * 0.05),
+      cell * (0.14 + jit(f, 6) * 0.03),
+      cell * (0.3 + jit(f, 7) * 0.08),
+      'rgba(255, 226, 160, 0.9)',
+      'rgba(255, 150, 50, 0.5)',
+    );
+    // Core — hot white-yellow heart near the base.
+    blob(
+      jit(f, 8) * 3,
+      cell * 0.1,
+      cell * 0.13,
+      cell * (0.2 + jit(f, 9) * 0.03),
+      'rgba(255, 248, 222, 1)',
+      'rgba(255, 196, 100, 0.7)',
+    );
+    ctx.restore();
+  }
+  FLAME_ATLAS = canvas;
+  return canvas;
 }
 
-function makeFlameSprite(scale: number, opacity: number): THREE.Sprite {
+interface FlameRec {
+  sprite: THREE.Sprite;
+  tex: THREE.CanvasTexture;
+  /** Phase offset so flames don't cycle in lockstep. */
+  seed: number;
+  /** Flipbook speed, frames/second. Big fire burns faster than candles. */
+  fps: number;
+  baseScale: number;
+}
+
+function makeFlame(
+  scale: number,
+  opacity: number,
+  fps: number,
+  seed: number,
+): FlameRec {
+  const tex = new THREE.CanvasTexture(getFlameAtlas());
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.repeat.set(1 / FLIP_GRID, 1 / FLIP_GRID);
   const mat = new THREE.SpriteMaterial({
-    map: getFlameTexture(),
+    map: tex,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     transparent: true,
     opacity,
     fog: false, // fire IS the light source; it must read through room fog
   });
-  const s = new THREE.Sprite(mat);
-  s.scale.set(scale * 0.6, scale, 1);
-  return s;
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(scale * 0.6, scale, 1);
+  return { sprite, tex, seed, fps, baseScale: scale };
+}
+
+/** Point a flame's UV window at flipbook frame for time `t`. */
+function advanceFlame(rec: FlameRec, t: number): void {
+  const f = Math.floor(t * rec.fps + rec.seed * 7.13) % FLIP_FRAMES;
+  rec.tex.offset.set(
+    (f % FLIP_GRID) / FLIP_GRID,
+    1 - (Math.floor(f / FLIP_GRID) + 1) / FLIP_GRID,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -264,9 +346,30 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   // FIREPLACE — on the LEFT WALL, facing into the room. The room's hero
   // light: its glow rakes across the floor and the gaming table's left side.
   // ==========================================================================
+  let emberField: {
+    pts: Float32Array;
+    geom: THREE.BufferGeometry;
+    ox: number;
+    oy: number;
+    oz: number;
+  } | null = null;
+  // Every flipbook flame in the room, advanced together in tick().
+  const allFlames: FlameRec[] = [];
+  const newFlame = (
+    scale: number,
+    opacity: number,
+    fps: number,
+  ): FlameRec => {
+    const rec = makeFlame(scale, opacity, fps, allFlames.length);
+    allFlames.push(rec);
+    track(rec.sprite.material);
+    track(rec.tex);
+    return rec;
+  };
+
   const fire = {
     light: new THREE.PointLight(0xff7a28, 85, 30, 1.6),
-    sprites: [] as THREE.Sprite[],
+    sprites: [] as FlameRec[],
     baseIntensity: 85,
   };
   {
@@ -332,20 +435,48 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
     ember.position.set(0, 0.32, 0.3);
     g.add(ember);
     // Flames (positions in world space — sprites billboard, so they live
-    // directly in the main group at the firebox mouth).
+    // directly in the main group at the firebox mouth). Fast flipbook —
+    // a hearth fire churns.
     const fwx = fx + 0.45;
-    const f1 = makeFlameSprite(2.5, 0.9);
-    f1.position.set(fwx, FLOOR_Y + 1.9, fz);
-    const f2 = makeFlameSprite(1.7, 0.75);
-    f2.position.set(fwx, FLOOR_Y + 1.5, fz - 0.6);
-    const f3 = makeFlameSprite(1.45, 0.75);
-    f3.position.set(fwx, FLOOR_Y + 1.45, fz + 0.65);
+    const f1 = newFlame(2.5, 0.9, 16);
+    f1.sprite.position.set(fwx, FLOOR_Y + 1.9, fz);
+    const f2 = newFlame(1.7, 0.75, 13);
+    f2.sprite.position.set(fwx, FLOOR_Y + 1.5, fz - 0.6);
+    const f3 = newFlame(1.45, 0.75, 14);
+    f3.sprite.position.set(fwx, FLOOR_Y + 1.45, fz + 0.65);
     fire.sprites.push(f1, f2, f3);
-    group.add(f1, f2, f3);
-    for (const s of fire.sprites) track(s.material);
+    group.add(f1.sprite, f2.sprite, f3.sprite);
     fire.light.position.set(fx + 1.6, FLOOR_Y + 2.2, fz);
     fire.light.castShadow = false;
     group.add(fire.light);
+
+    // Rising embers — a sparse column of hot points drifting up from the
+    // log bed, swaying as they climb. Bloom turns them into fireflies.
+    const EMBER_N = 14;
+    const emberPts = new Float32Array(EMBER_N * 3);
+    const emberGeomP = track(new THREE.BufferGeometry());
+    emberGeomP.setAttribute('position', new THREE.BufferAttribute(emberPts, 3));
+    const emberPtsMat = track(
+      new THREE.PointsMaterial({
+        color: 0xff8a30,
+        size: 0.05,
+        transparent: true,
+        opacity: 0.85,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        fog: false,
+        sizeAttenuation: true,
+      }),
+    );
+    const emberPoints = new THREE.Points(emberGeomP, emberPtsMat);
+    group.add(emberPoints);
+    emberField = {
+      pts: emberPts,
+      geom: emberGeomP,
+      ox: fx + 0.5,
+      oy: FLOOR_Y + 0.7,
+      oz: fz,
+    };
   }
 
   // ==========================================================================
@@ -395,7 +526,54 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   // ==========================================================================
   const moon = new THREE.PointLight(0x6a82b8, 9, 16, 1.8);
   {
+    // Soft gradient for the moonlight shafts — painted once.
+    const shaftCanvas = document.createElement('canvas');
+    shaftCanvas.width = 64;
+    shaftCanvas.height = 256;
+    {
+      const sctx = shaftCanvas.getContext('2d')!;
+      const sg = sctx.createLinearGradient(0, 0, 0, 256);
+      sg.addColorStop(0, 'rgba(255,255,255,0.55)');
+      sg.addColorStop(0.6, 'rgba(255,255,255,0.18)');
+      sg.addColorStop(1, 'rgba(255,255,255,0)');
+      sctx.fillStyle = sg;
+      sctx.fillRect(0, 0, 64, 256);
+      // Feather the sides so the shaft has no hard vertical edges.
+      const sgx = sctx.createLinearGradient(0, 0, 64, 0);
+      sgx.addColorStop(0, 'rgba(0,0,0,1)');
+      sgx.addColorStop(0.25, 'rgba(0,0,0,0)');
+      sgx.addColorStop(0.75, 'rgba(0,0,0,0)');
+      sgx.addColorStop(1, 'rgba(0,0,0,1)');
+      sctx.globalCompositeOperation = 'destination-out';
+      sctx.fillStyle = sgx;
+      sctx.fillRect(0, 0, 64, 256);
+    }
+    const shaftTex = track(new THREE.CanvasTexture(shaftCanvas));
+    shaftTex.colorSpace = THREE.SRGBColorSpace;
+
     const wx = WALL_X - 0.18;
+    for (const wz of [-6.5, 0.5]) {
+      // Volumetric-look moon shaft slanting from the pane into the room.
+      const shaftGeom = new THREE.PlaneGeometry(2.0, 6.4);
+      track(shaftGeom);
+      const shaftMat = track(
+        new THREE.MeshBasicMaterial({
+          map: shaftTex,
+          color: 0x6a82b8,
+          transparent: true,
+          opacity: 0.14,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          fog: false,
+          side: THREE.DoubleSide,
+        }),
+      );
+      const shaft = new THREE.Mesh(shaftGeom, shaftMat);
+      shaft.position.set(wx - 2.0, FLOOR_Y + 2.9, wz);
+      shaft.rotation.y = -Math.PI / 2 + 0.5;
+      shaft.rotation.z = -0.62;
+      group.add(shaft);
+    }
     for (const wz of [-6.5, 0.5]) {
       // Frame.
       const frameV = new THREE.BoxGeometry(0.18, 2.6, 0.22);
@@ -422,7 +600,7 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   // rotations. Silhouettes + lit fragments; the darkness models them.
   // ==========================================================================
   // Far-table candle flames, collected so tick() can flicker them.
-  const farCandleSprites: THREE.Sprite[] = [];
+  const farCandleSprites: FlameRec[] = [];
   {
     const mkTable = (x: number, z: number, ry: number) => {
       const top = new THREE.BoxGeometry(3.2, 0.2, 1.8);
@@ -450,11 +628,10 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
       // (light budget) — the flame sprite + bloom carries it.
       const cGeom = new THREE.CylinderGeometry(0.07, 0.08, 0.3, 8);
       add(cGeom, waxMat, x + 0.5 * Math.cos(ry), FLOOR_Y + 2.25, z + 0.5 * Math.sin(ry));
-      const fl = makeFlameSprite(0.22, 0.9);
-      fl.position.set(x + 0.5 * Math.cos(ry), FLOOR_Y + 2.52, z + 0.5 * Math.sin(ry));
-      track(fl.material);
+      const fl = newFlame(0.22, 0.9, 10);
+      fl.sprite.position.set(x + 0.5 * Math.cos(ry), FLOOR_Y + 2.52, z + 0.5 * Math.sin(ry));
       farCandleSprites.push(fl);
-      group.add(fl);
+      group.add(fl.sprite);
       // A mug.
       const mGeom = new THREE.CylinderGeometry(0.13, 0.15, 0.3, 10);
       add(mGeom, pewterMat, x - 0.8 * Math.cos(ry), FLOOR_Y + 2.25, z - 0.8 * Math.sin(ry), { cast: true });
@@ -514,7 +691,7 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   // ==========================================================================
   const chandelier = {
     light: new THREE.PointLight(0xffc080, 16, 15, 1.8),
-    sprites: [] as THREE.Sprite[],
+    sprites: [] as FlameRec[],
     baseIntensity: 16,
   };
   {
@@ -534,11 +711,10 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
       const px = Math.cos(a) * 1.5;
       const pz = cz + Math.sin(a) * 1.5;
       add(candleGeom, waxMat, px, cy + 0.2, pz);
-      const fl = makeFlameSprite(0.3, 0.9);
-      fl.position.set(px, cy + 0.5, pz);
+      const fl = newFlame(0.3, 0.9, 10);
+      fl.sprite.position.set(px, cy + 0.5, pz);
       chandelier.sprites.push(fl);
-      group.add(fl);
-      track(fl.material);
+      group.add(fl.sprite);
     }
     chandelier.light.position.set(0, cy + 0.4, cz);
     group.add(chandelier.light);
@@ -549,7 +725,7 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   // ==========================================================================
   const tableCandles = {
     light: new THREE.PointLight(0xffb870, 9, 7, 2.0),
-    sprites: [] as THREE.Sprite[],
+    sprites: [] as FlameRec[],
     baseIntensity: 9,
   };
   {
@@ -565,11 +741,10 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
       c.position.set(px, h / 2, pz);
       c.castShadow = true;
       group.add(c);
-      const fl = makeFlameSprite(0.26, 0.95);
-      fl.position.set(px, h + 0.13, pz);
+      const fl = newFlame(0.26, 0.95, 12);
+      fl.sprite.position.set(px, h + 0.13, pz);
       tableCandles.sprites.push(fl);
-      group.add(fl);
-      track(fl.material);
+      group.add(fl.sprite);
     }
     tableCandles.light.position.set(-4.55, 0.95, 1.0);
     group.add(tableCandles.light);
@@ -666,34 +841,72 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
         Math.sin(t * speed * 6.1 + seed * 0.6) * 0.15);
 
   const tick = (time: number) => {
+    // Flipbook frames — the flame SHAPES dance.
+    for (const rec of allFlames) advanceFlame(rec, time);
+
+    // Light + scale flicker layered on top.
     const ff = flicker(time, 2.2, 1.3);
     fire.light.intensity = fire.baseIntensity * (0.78 + ff * 0.45);
     for (let i = 0; i < fire.sprites.length; i++) {
-      const s = fire.sprites[i]!;
+      const rec = fire.sprites[i]!;
       const f = flicker(time, 3.1, i * 2.4);
-      const base = i === 0 ? 2.5 : i === 1 ? 1.7 : 1.45;
-      s.scale.set(base * 0.6 * (0.9 + f * 0.2), base * (0.85 + f * 0.3), 1);
-      (s.material as THREE.SpriteMaterial).opacity = 0.55 + f * 0.35;
+      const base = rec.baseScale;
+      rec.sprite.scale.set(
+        base * 0.6 * (0.9 + f * 0.2),
+        base * (0.85 + f * 0.3),
+        1,
+      );
+      (rec.sprite.material as THREE.SpriteMaterial).opacity = 0.55 + f * 0.35;
     }
     chandelier.light.intensity =
       chandelier.baseIntensity * (0.85 + flicker(time, 4.2, 7.7) * 0.3);
     for (let i = 0; i < chandelier.sprites.length; i++) {
-      const s = chandelier.sprites[i]!;
+      const rec = chandelier.sprites[i]!;
       const f = flicker(time, 5.0, i * 3.1);
-      s.scale.set(0.3 * 0.6 * (0.85 + f * 0.3), 0.3 * (0.8 + f * 0.4), 1);
+      rec.sprite.scale.set(
+        rec.baseScale * 0.6 * (0.85 + f * 0.3),
+        rec.baseScale * (0.8 + f * 0.4),
+        1,
+      );
     }
     tableCandles.light.intensity =
       tableCandles.baseIntensity * (0.82 + flicker(time, 4.6, 12.9) * 0.36);
     for (let i = 0; i < tableCandles.sprites.length; i++) {
-      const s = tableCandles.sprites[i]!;
+      const rec = tableCandles.sprites[i]!;
       const f = flicker(time, 5.4, i * 1.9 + 4.2);
-      s.scale.set(0.26 * 0.6 * (0.85 + f * 0.3), 0.26 * (0.8 + f * 0.45), 1);
+      rec.sprite.scale.set(
+        rec.baseScale * 0.6 * (0.85 + f * 0.3),
+        rec.baseScale * (0.8 + f * 0.45),
+        1,
+      );
     }
     for (let i = 0; i < farCandleSprites.length; i++) {
-      const s = farCandleSprites[i]!;
+      const rec = farCandleSprites[i]!;
       const f = flicker(time, 5.8, i * 2.7 + 9.1);
-      s.scale.set(0.22 * 0.6 * (0.85 + f * 0.3), 0.22 * (0.8 + f * 0.4), 1);
+      rec.sprite.scale.set(
+        rec.baseScale * 0.6 * (0.85 + f * 0.3),
+        rec.baseScale * (0.8 + f * 0.4),
+        1,
+      );
     }
+
+    // Embers: each particle loops a rising arc with horizontal sway;
+    // staggered phases so the column never empties or pulses.
+    if (emberField) {
+      const { pts, geom, ox, oy, oz } = emberField;
+      const n = pts.length / 3;
+      for (let i = 0; i < n; i++) {
+        const speed = 0.16 + (i % 5) * 0.04;
+        const phase = i * 0.737;
+        const cycle = (time * speed + phase) % 1;
+        pts[i * 3] = ox + Math.sin(time * 0.9 + i * 2.1) * 0.25 * cycle;
+        pts[i * 3 + 1] = oy + cycle * 3.0;
+        pts[i * 3 + 2] = oz + Math.cos(time * 0.7 + i * 1.3) * 0.2 * cycle;
+      }
+      geom.attributes.position!.needsUpdate = true;
+    }
+
+    // Motes: slow figure-eight drift around each base point.
     for (let i = 0; i < MOTE_COUNT; i++) {
       const sp = 0.12 + (i % 7) * 0.025;
       const ph = i * 1.318;

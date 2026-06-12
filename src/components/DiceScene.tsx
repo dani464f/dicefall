@@ -8,6 +8,12 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { FilmPass } from 'three/examples/jsm/postprocessing/FilmPass.js';
 import { VignetteShader } from 'three/examples/jsm/shaders/VignetteShader.js';
+import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js';
+import {
+  makeCinemaPass,
+  makeStreakPass,
+  setStreakSize,
+} from '../lib/cinemaPasses';
 import { loadRapier, type Rapier } from '../lib/physics';
 import { getUpwardFaceValue } from '../lib/faceDetection';
 import { createD6Materials } from '../lib/diceFaceTextures';
@@ -326,6 +332,7 @@ function buildScene(
     },
   };
   const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 100);
+  let fovBase = 52; // set by updateSize from aspect; lean offset rides on top
   let trayScale = 1;
   // Live endpoints (shot × tray scale) and tween state.
   const camFrom: CameraShot = {
@@ -346,6 +353,22 @@ function buildScene(
     look: SHOTS[name].look.clone(),
   });
 
+  // The tween writes BASE pos/look; the compose step in the render loop
+  // layers the handheld drift + fov breathe on top each frame. The
+  // camera object itself is never the tween's source of truth, so drift
+  // can't leak into shot endpoints.
+  const camPosBase = SHOTS.seated.pos.clone();
+  const camLookBase = SHOTS.seated.look.clone();
+  // Lean punch-in: a ~2.5° tighter lens during the throw beat — the
+  // "operator leans with you" feel. Tweened alongside the position.
+  let fovOffFrom = 0;
+  let fovOffTo = 0;
+  let fovOffNow = 0;
+  const SHOT_FOV_OFFSET: Record<'seated' | 'lean', number> = {
+    seated: 0,
+    lean: -2.6,
+  };
+
   const cutToShot = (name: 'seated' | 'lean', instant: boolean) => {
     const end = shotEndpoint(name);
     const reduced =
@@ -357,15 +380,18 @@ function buildScene(
       camTo.pos.copy(end.pos);
       camTo.look.copy(end.look);
       camT = 1;
-      camera.position.copy(end.pos);
-      camera.lookAt(end.look);
+      camPosBase.copy(end.pos);
+      camLookBase.copy(end.look);
+      fovOffFrom = fovOffTo = fovOffNow = SHOT_FOV_OFFSET[name];
     } else {
-      camFrom.pos.copy(camera.position);
+      camFrom.pos.copy(camPosBase);
       // Current look = lerp of previous endpoints; reuse camTo's look as
       // the best available "where we're looking now".
       camFrom.look.lerpVectors(camFrom.look, camTo.look, easeOutCubic(camT));
       camTo.pos.copy(end.pos);
       camTo.look.copy(end.look);
+      fovOffFrom = fovOffNow;
+      fovOffTo = SHOT_FOV_OFFSET[name];
       camT = 0;
     }
     requestRender();
@@ -592,6 +618,15 @@ function buildScene(
   // after it, exactly like photochemical grain on a print.
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
+  // Depth of field — focus rides the tray through every shot; the room
+  // softens like a long lens wide open. maxblur kept restrained so dice
+  // numerals stay forensic-sharp at the focal plane.
+  const bokehPass = new BokehPass(scene, camera, {
+    focus: 9.0,
+    aperture: 0.00011,
+    maxblur: 0.0075,
+  });
+  composer.addPass(bokehPass);
   const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(1, 1), // resized in updateSize
     0.38, // strength — present on flames/gold, invisible on mids
@@ -599,7 +634,14 @@ function buildScene(
     0.82, // threshold — only genuine emitters bloom
   );
   composer.addPass(bloomPass);
+  // Anamorphic streaks in linear HDR — flames + window panes smear into
+  // wide blue-tinted scope-lens lines.
+  const streakPass = makeStreakPass();
+  composer.addPass(streakPass);
   composer.addPass(new OutputPass());
+  // Print grade: chromatic aberration at the edges, orange-and-teal
+  // split tone, gentle filmic S-curve.
+  composer.addPass(makeCinemaPass());
   const vignettePass = new ShaderPass(VignetteShader);
   vignettePass.uniforms.offset!.value = 1.05;
   vignettePass.uniforms.darkness!.value = 1.18;
@@ -613,12 +655,18 @@ function buildScene(
     if (w === 0 || h === 0) return;
     renderer.setSize(w, h, false);
     composer.setSize(w, h);
-    composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // 1.75 cap (renderer itself caps at 2): with DOF + bloom + grade the
+    // post chain is fragment-bound, and the film look — grain, bokeh,
+    // streaks — actively benefits from a touch of softness.
+    composer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
     bloomPass.setSize(w / 2, h / 2); // half-res bloom — quality/cost sweet spot
+    setStreakSize(streakPass, w, h);
     camera.aspect = w / h;
     // Wider vertical fov on narrow/portrait viewports so the seated shot
-    // keeps the tray AND the room in frame on phones.
-    camera.fov = camera.aspect < 0.75 ? 58 : 52;
+    // keeps the tray AND the room in frame on phones. The lean punch-in
+    // offset rides on top via the compose step.
+    fovBase = camera.aspect < 0.75 ? 58 : 52;
+    camera.fov = fovBase + fovOffNow;
     camera.updateProjectionMatrix();
     requestRender();
   };
@@ -871,10 +919,41 @@ function buildScene(
     if (camT < 1) {
       camT = Math.min(1, camT + delta / CAM_TWEEN_S);
       const e = easeOutCubic(camT);
-      camera.position.lerpVectors(camFrom.pos, camTo.pos, e);
-      _camLookNow.lerpVectors(camFrom.look, camTo.look, e);
-      camera.lookAt(_camLookNow);
+      camPosBase.lerpVectors(camFrom.pos, camTo.pos, e);
+      camLookBase.lerpVectors(camFrom.look, camTo.look, e);
+      fovOffNow = fovOffFrom + (fovOffTo - fovOffFrom) * e;
       requestRender();
+    }
+
+    // ---- living-camera compose: base shot + handheld drift + breathe ----
+    // Layered slow sines (periods 17–23 s, amplitudes a few cm) — the
+    // micro-movement of a held camera, far below "motion", just enough
+    // that the frame never reads as locked-off. Off under reduced motion
+    // (ambientTime freezes there, so drift freezes with it).
+    {
+      const t = ambientTime;
+      camera.position.set(
+        camPosBase.x + Math.sin(t * 0.31) * 0.07,
+        camPosBase.y + Math.sin(t * 0.43 + 1.7) * 0.05,
+        camPosBase.z + Math.cos(t * 0.27) * 0.055,
+      );
+      _camLookNow.set(
+        camLookBase.x + Math.sin(t * 0.36 + 0.8) * 0.045,
+        camLookBase.y + Math.cos(t * 0.3) * 0.03,
+        camLookBase.z,
+      );
+      camera.lookAt(_camLookNow);
+      const f = fovBase + fovOffNow;
+      if (Math.abs(camera.fov - f) > 1e-3) {
+        camera.fov = f;
+        camera.updateProjectionMatrix();
+      }
+      // DOF tracks the tray (world origin) through every shot + drift.
+      // (BokehPass types `uniforms` as a bare object — cast for the one
+      // uniform we drive.)
+      (
+        bokehPass.uniforms as Record<string, { value: number }>
+      ).focus!.value = camera.position.length();
     }
 
     if (activeThrow) {
