@@ -157,6 +157,10 @@ interface PhysicsBundle {
   rapier: Rapier;
   world: InstanceType<Rapier['World']>;
   staticBodies: InstanceType<Rapier['RigidBody']>[];
+  /** Tear down and recreate the four wall colliders at ±inner. Called when
+   *  the tray resizes for a bigger throw; the floor is oversized already
+   *  and never moves. */
+  rebuildWalls: (inner: number) => void;
   dispose: () => void;
 }
 
@@ -421,15 +425,22 @@ function buildScene(
     removeActiveThrow();
     removeLegacy();
 
+    // Size the tray to the throw BEFORE spawning — dice spawn relative to
+    // the new bounds. Resizing only ever happens here, with the tray
+    // empty, so settled dice are never caught outside a shrinking wall.
+    applyTrayLayout(trayInnerFor(req.quantity));
+
     const dice: ThrowDie[] = [];
     for (let i = 0; i < req.quantity; i++) {
       const d = createThrowDie(
         req.diceType,
         i,
+        req.quantity,
         physics,
         resolved.dice.color,
         resolved.dice.roughness,
         resolved.dice.metalness,
+        trayInner,
       );
       scene.add(d.mesh);
       dice.push(d);
@@ -470,113 +481,56 @@ function buildScene(
     requestRender();
   };
 
-  // ---------- dynamic camera framing ----------
-  // The camera frames whatever dice are actually in the tray: a single die
-  // reads closer, a 12-die spill pulls back until the whole pile fits, and
-  // an empty tray returns to the default establishing view. Implemented as
-  // a per-frame target (bounding box of dice → distance along the fixed
-  // cinematic view direction) + exponential damping toward it, so framing
-  // changes glide instead of cutting. Integrates with on-demand rendering:
-  // a moving camera keeps frames rendering; a camera at rest costs nothing.
-  const CAM_DIR = new THREE.Vector3(0, 5.5, 6.5).normalize();
-  const CAM_DEFAULT_DIST = new THREE.Vector3(0, 5.5, 6.5).length();
-  // Closest the rig will push in (single settled die) and farthest it will
-  // pull out (max-quantity pile on a narrow viewport). The min keeps enough
-  // tray context that the bottom control stack never covers the die.
-  const CAM_MIN_DIST = 6.2;
-  const CAM_MAX_DIST = 12;
-  // Dice still raining in from the staggered spawn column sit far above
-  // the table; framing them would yank the camera skyward. They drop into
-  // frame instead.
-  const CAM_TRACK_MAX_Y = 4;
-  const camLook = new THREE.Vector3(0, 0, 0);
-  const camTargetLook = new THREE.Vector3(0, 0, 0);
-  let camTargetDist = CAM_DEFAULT_DIST;
-  const _bb = new THREE.Box3();
-  const _bbCenter = new THREE.Vector3();
-  const _bbSize = new THREE.Vector3();
-  const _camDesired = new THREE.Vector3();
+  // ---------- dynamic tray sizing ----------
+  // The tray itself grows with the throw size so a fistful of dice has
+  // floor room to spread out instead of piling into a heap (the camera
+  // stays put — it's re-positioned ONCE per resize, instantly, so there is
+  // no in-play camera motion). Visual floor + rails scale in place; the
+  // physics walls are rebuilt at the matching bounds.
+  const TRAY_BASE_INNER = 2.1;
+  const TRAY_MAX_INNER = 3.4;
+  const RAIL_T = 0.22;
+  const CAM_BASE_POS = new THREE.Vector3(0, 5.5, 6.5);
+  let trayInner = TRAY_BASE_INNER;
 
-  const fitDistance = (spread: number): number => {
-    // Fit a half-extent (plus one die radius of margin) in both the
-    // vertical fov and the aspect-corrected horizontal fov.
-    const halfV = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-    const distV = spread / halfV;
-    const distH = spread / (halfV * Math.max(camera.aspect, 0.55));
-    return THREE.MathUtils.clamp(
-      Math.max(distV, distH) * 1.18,
-      CAM_MIN_DIST,
-      CAM_MAX_DIST,
+  /** Tray half-width needed for a given dice count. ≤4 dice use the
+   *  classic 4.2-unit tray; beyond that each extra die buys ~0.16 units of
+   *  half-width, capped so the biggest tray still sits inside the table. */
+  const trayInnerFor = (quantity: number): number =>
+    THREE.MathUtils.clamp(
+      TRAY_BASE_INNER + Math.max(0, quantity - 4) * 0.16,
+      TRAY_BASE_INNER,
+      TRAY_MAX_INNER,
     );
-  };
 
-  /**
-   * Phase-based framing — this is what keeps the camera from hunting:
-   *
-   *   ACTION (dice tumbling): hold the wide establishing shot. Look-at
-   *   pinned to the tray centre, distance = at least the default, widened
-   *   further only if the pile genuinely needs it (and never tightened
-   *   mid-action). Tumbling dice reshape their bounding box every frame;
-   *   chasing it is what read as "back and forth".
-   *
-   *   SETTLED (everything at rest): one deliberate push-in to frame the
-   *   resting pile. The bodies are asleep so the target is static by
-   *   construction. A small deadband ignores sub-0.3-unit retargets.
-   *
-   *   EMPTY: glide back to the default establishing view.
-   */
-  const updateCameraTarget = (inAction: boolean) => {
-    _bb.makeEmpty();
-    if (activeThrow) {
-      for (const d of activeThrow.dice) {
-        if (d.mesh.position.y < CAM_TRACK_MAX_Y) _bb.expandByPoint(d.mesh.position);
-      }
-    }
-    for (const d of legacyDice) {
-      if (d.mesh.position.y < CAM_TRACK_MAX_Y) _bb.expandByPoint(d.mesh.position);
-    }
-    if (_bb.isEmpty()) {
-      camTargetLook.set(0, 0, 0);
-      camTargetDist = CAM_DEFAULT_DIST;
-      return;
-    }
-    _bb.getCenter(_bbCenter);
-    _bb.getSize(_bbSize);
-
-    if (inAction) {
-      // Hold the establishing shot. Spread is measured around the tray
-      // origin (not the moving centroid) so the only possible adjustment
-      // is a monotonic widen for genuinely oversized piles.
-      camTargetLook.set(0, 0, 0);
-      const spreadFromOrigin =
-        Math.max(
-          Math.abs(_bb.min.x),
-          Math.abs(_bb.max.x),
-          Math.abs(_bb.min.z),
-          Math.abs(_bb.max.z),
-        ) + 0.95;
-      camTargetDist = Math.max(
-        CAM_DEFAULT_DIST,
-        camTargetDist,
-        fitDistance(spreadFromOrigin),
-      );
-      return;
-    }
-
-    // Settled: frame the resting pile. Deadband so a freshly computed
-    // target within 0.3 units of the current one doesn't retrigger motion.
-    const nextLookX = THREE.MathUtils.clamp(_bbCenter.x, -1.2, 1.2);
-    const nextLookZ = THREE.MathUtils.clamp(_bbCenter.z, -1.2, 1.2);
-    const spread = Math.max(_bbSize.x, _bbSize.z) / 2 + 0.95;
-    const nextDist = fitDistance(spread);
-    const meaningful =
-      Math.abs(nextDist - camTargetDist) > 0.3 ||
-      Math.abs(nextLookX - camTargetLook.x) > 0.25 ||
-      Math.abs(nextLookZ - camTargetLook.z) > 0.25;
-    if (meaningful) {
-      camTargetLook.set(nextLookX, 0, nextLookZ);
-      camTargetDist = nextDist;
-    }
+  const applyTrayLayout = (inner: number) => {
+    if (inner === trayInner) return;
+    trayInner = inner;
+    const s = inner / TRAY_BASE_INNER;
+    // Floor plane: geometry is 4.2×4.2 in XY (rotated flat) — uniform
+    // scale tracks the new side length.
+    trayFloor.scale.set(s, s, 1);
+    // Rails: stretch along their long axis, re-seat at the new bounds.
+    const baseOuter = TRAY_BASE_INNER + RAIL_T;
+    const newOuter = inner + RAIL_T;
+    const railScale = newOuter / baseOuter;
+    railNorth.scale.x = railScale;
+    railSouth.scale.x = railScale;
+    railNorth.position.z = -inner - RAIL_T / 2;
+    railSouth.position.z = inner + RAIL_T / 2;
+    railEast.scale.z = railScale;
+    railWest.scale.z = railScale;
+    railEast.position.x = inner + RAIL_T / 2;
+    railWest.position.x = -inner - RAIL_T / 2;
+    // Physics walls follow the visuals exactly.
+    physics?.rebuildWalls(inner);
+    // One instant camera framing per resize — scaled along the same
+    // cinematic direction so the whole tray stays in frame. This is a
+    // set, not an animation: between rolls of the same size nothing
+    // moves at all.
+    camera.position.copy(CAM_BASE_POS).multiplyScalar(s);
+    camera.lookAt(0, 0, 0);
+    requestRender();
   };
 
   // ---------- render loop ----------
@@ -631,30 +585,6 @@ function buildScene(
     for (const d of legacyDice) d.tick(delta);
 
     if (subSteps > 0 || tweenAnimating || legacyNeedsSim) {
-      requestRender();
-    }
-
-    // ---- camera follow ----
-    const inAction = throwNeedsSim || legacyNeedsSim || tweenAnimating;
-    updateCameraTarget(inAction);
-    _camDesired.copy(camTargetLook).addScaledVector(CAM_DIR, camTargetDist);
-    const camOffsetSq =
-      camera.position.distanceToSquared(_camDesired) +
-      camLook.distanceToSquared(camTargetLook);
-    if (camOffsetSq > 1e-6) {
-      // Snap instead of glide under reduced motion (the attribute App
-      // mirrors onto <html>). Otherwise two damping speeds: pulling OUT
-      // is brisk (dice must never escape the frame), pushing IN is a
-      // slow, deliberate move that only happens once everything is at
-      // rest — one out, one in per roll, never a hunt.
-      const snap =
-        document.documentElement.getAttribute('data-reduced-motion') ===
-        'true';
-      const pullingOut = camTargetDist > camera.position.distanceTo(camLook);
-      const k = snap ? 1 : 1 - Math.exp(-delta * (pullingOut ? 5 : 1.8));
-      camera.position.lerp(_camDesired, k);
-      camLook.lerp(camTargetLook, k);
-      camera.lookAt(camLook);
       requestRender();
     }
 
@@ -786,35 +716,63 @@ function buildScene(
 function createPhysics(rapier: Rapier): PhysicsBundle {
   const world = new rapier.World({ x: 0, y: -16, z: 0 });
   const staticBodies: InstanceType<Rapier['RigidBody']>[] = [];
+  let wallBodies: InstanceType<Rapier['RigidBody']>[] = [];
 
   const addStatic = (
     desc: InstanceType<Rapier['ColliderDesc']>,
     pos: { x: number; y: number; z: number },
+    into: InstanceType<Rapier['RigidBody']>[],
   ) => {
     const body = world.createRigidBody(
       rapier.RigidBodyDesc.fixed().setTranslation(pos.x, pos.y, pos.z),
     );
     world.createCollider(desc.setRestitution(0.45).setFriction(0.55), body);
-    staticBodies.push(body);
+    into.push(body);
   };
 
-  // Floor (thick so fast-moving dice can't tunnel)
-  addStatic(rapier.ColliderDesc.cuboid(7, 0.25, 6), { x: 0, y: -0.25, z: 0 });
+  // Floor (thick so fast-moving dice can't tunnel; oversized so it covers
+  // every tray size the layout can request)
+  addStatic(
+    rapier.ColliderDesc.cuboid(7, 0.25, 6),
+    { x: 0, y: -0.25, z: 0 },
+    staticBodies,
+  );
 
-  // Walls — same camera-fit bounds as before
-  const wallH = 2.5;
-  const wallT = 0.1;
-  const wx = 2.1;
-  const wz = 2.1;
-  addStatic(rapier.ColliderDesc.cuboid(wallT, wallH, wz), { x: -wx, y: wallH, z: 0 });
-  addStatic(rapier.ColliderDesc.cuboid(wallT, wallH, wz), { x: wx, y: wallH, z: 0 });
-  addStatic(rapier.ColliderDesc.cuboid(wx, wallH, wallT), { x: 0, y: wallH, z: -wz });
-  addStatic(rapier.ColliderDesc.cuboid(wx, wallH, wallT), { x: 0, y: wallH, z: wz });
+  const buildWalls = (inner: number) => {
+    const wallH = 2.5;
+    const wallT = 0.1;
+    addStatic(
+      rapier.ColliderDesc.cuboid(wallT, wallH, inner),
+      { x: -inner, y: wallH, z: 0 },
+      wallBodies,
+    );
+    addStatic(
+      rapier.ColliderDesc.cuboid(wallT, wallH, inner),
+      { x: inner, y: wallH, z: 0 },
+      wallBodies,
+    );
+    addStatic(
+      rapier.ColliderDesc.cuboid(inner, wallH, wallT),
+      { x: 0, y: wallH, z: -inner },
+      wallBodies,
+    );
+    addStatic(
+      rapier.ColliderDesc.cuboid(inner, wallH, wallT),
+      { x: 0, y: wallH, z: inner },
+      wallBodies,
+    );
+  };
+  buildWalls(2.1);
 
   return {
     rapier,
     world,
     staticBodies,
+    rebuildWalls(inner: number) {
+      for (const b of wallBodies) world.removeRigidBody(b);
+      wallBodies = [];
+      buildWalls(inner);
+    },
     dispose() {
       world.free();
     },
@@ -874,10 +832,12 @@ function getSharedDieVisual(type: DiceType): {
 function createThrowDie(
   type: DiceType,
   index: number,
+  quantity: number,
   physics: PhysicsBundle,
   diceColor: number,
   diceRoughness: number,
   diceMetalness: number,
+  trayInner: number,
 ): ThrowDie {
   const { rapier, world } = physics;
 
@@ -907,12 +867,19 @@ function createThrowDie(
   mesh.receiveShadow = true;
 
   // Throw kinematics — from the user's side of the tray (camera-facing,
-  // +Z) inward (-Z), with random horizontal jitter and a good amount of
-  // tumble. Dice are vertically staggered so multi-throws don't overlap
-  // at spawn.
-  const startX = (Math.random() - 0.5) * 1.8;
+  // +Z) inward (-Z). Dice spawn in round-robin lanes spread across the
+  // tray width (instead of one random column) so multi-dice throws land
+  // distributed rather than piling into a single heap, and are vertically
+  // staggered so they don't overlap at spawn. Lane span and the spawn
+  // line both scale with the tray, which grows with the throw size.
+  const laneCount = Math.min(quantity, 5);
+  const lane = index % laneCount;
+  const laneSpan = trayInner * 1.5;
+  const laneX =
+    laneCount === 1 ? 0 : (lane / (laneCount - 1) - 0.5) * laneSpan;
+  const startX = laneX + (Math.random() - 0.5) * 0.5;
   const startY = 2.4 + index * 0.55;
-  const startZ = 1.3 + (Math.random() - 0.5) * 0.4;
+  const startZ = trayInner - 0.8 + (Math.random() - 0.5) * 0.4;
 
   // Throw kinematics tuned to settle within ~1.5s instead of spinning. The
   // initial spin is just enough to tumble the die over a couple times in
