@@ -1,6 +1,13 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { FilmPass } from 'three/examples/jsm/postprocessing/FilmPass.js';
+import { VignetteShader } from 'three/examples/jsm/shaders/VignetteShader.js';
 import { loadRapier, type Rapier } from '../lib/physics';
 import { getUpwardFaceValue } from '../lib/faceDetection';
 import { createD6Materials } from '../lib/diceFaceTextures';
@@ -488,43 +495,95 @@ function buildScene(
   top.position.copy(resolved.lighting.top.position);
   scene.add(top);
 
-  // --- Painted depth plate (Higgsfield tavern bokeh) ---
-  // Sits BEHIND the 3D room's back paneling and shows only above it —
-  // the warm out-of-focus glow of "more tavern" beyond the wall line.
-  // fog:false (carries its own depth), toneMapped:false (pre-graded),
-  // dimmed so it reads as distance, not a poster.
+  // --- Cinematic backplate (Soul Cinema film still) ---
+  // The ROOM is a 2K film-graded plate mounted perpendicular to the
+  // SEATED view axis (classic backplate) so the image maps ~1:1 onto the
+  // frame: painted fireplace mid-left, chandelier top-center, beams,
+  // haze. The live 3D table occludes the frame below v≈0.43, so the
+  // plate's upper band is what reads. Sized with overscan so the LEAN
+  // shot and portrait fovs never reveal an edge. fog:false (the plate
+  // carries its own atmosphere), toneMapped:false (pre-graded).
+  const PLATE_DIST = 22;
+  const PLATE_OVERSCAN = 1.3;
+  const _plateDir = new THREE.Vector3()
+    .copy(SHOTS.seated.look)
+    .sub(SHOTS.seated.pos)
+    .normalize();
+  let plateMesh: THREE.Mesh | null = null;
+
+  /** Convert plate-image UV (0..1, v down from top) to a world position
+   *  on the (unscaled) plate — used to anchor live FX onto painted
+   *  features (the fireplace). */
+  const plateUVToWorld = (
+    u: number,
+    v: number,
+    towardCamera = 0,
+  ): THREE.Vector3 => {
+    const h = 2 * Math.tan(THREE.MathUtils.degToRad(52 / 2)) * PLATE_DIST;
+    const w = (h * 16) / 9;
+    const center = SHOTS.seated.pos
+      .clone()
+      .addScaledVector(_plateDir, PLATE_DIST);
+    const right = new THREE.Vector3(1, 0, 0);
+    const up = new THREE.Vector3().crossVectors(_plateDir, right).negate();
+    return center
+      .addScaledVector(right, (u - 0.5) * w)
+      .addScaledVector(up, (0.5 - v) * h)
+      .addScaledVector(_plateDir, -towardCamera);
+  };
+
+  const fitPlate = () => {
+    if (!plateMesh) return;
+    const s = trayScale;
+    const center = SHOTS.seated.pos
+      .clone()
+      .multiplyScalar(s)
+      .addScaledVector(_plateDir, PLATE_DIST * s);
+    plateMesh.position.copy(center);
+    plateMesh.lookAt(SHOTS.seated.pos.clone().multiplyScalar(s));
+    const h =
+      2 * Math.tan(THREE.MathUtils.degToRad(52 / 2)) * PLATE_DIST * s;
+    const w = (h * 16) / 9;
+    plateMesh.scale.set(w * PLATE_OVERSCAN, h * PLATE_OVERSCAN, 1);
+    requestRender();
+  };
+
   {
     new THREE.TextureLoader().load(
-      '/backdrop/tavern.webp',
+      '/backdrop/plate.webp',
       (tex) => {
         if (sceneDisposed) {
           tex.dispose();
           return;
         }
         tex.colorSpace = THREE.SRGBColorSpace;
-        const backdropGeom = new THREE.PlaneGeometry(42, 23.6);
-        const backdropMat = new THREE.MeshBasicMaterial({
+        tex.anisotropy = 4;
+        const plateGeom = new THREE.PlaneGeometry(1, 1); // sized by fitPlate
+        const plateMat = new THREE.MeshBasicMaterial({
           map: tex,
           fog: false,
           toneMapped: false,
-          color: 0x9a9a9a, // pre-dim the plate into the gloom
         });
-        const backdrop = new THREE.Mesh(backdropGeom, backdropMat);
-        backdrop.position.set(0, 8.2, -14.4);
-        scene.add(backdrop);
-        requestRender();
+        plateMesh = new THREE.Mesh(plateGeom, plateMat);
+        scene.add(plateMesh);
+        fitPlate();
       },
       undefined,
       () => {
-        // No backdrop asset → the fogged void. Fine.
+        // No plate asset → the fogged void. Fine.
       },
     );
   }
 
-  // --- The 3D tavern around the table ---
+  // --- Near-field tavern life (flames over the plate, table dressing) ---
+  // The fire anchor maps the plate's painted hearth (image UV, measured
+  // off the chosen Soul Cinema still) into world space so the live flame
+  // sprites sit exactly on the painted glow, just above the 3D table's
+  // occlusion line.
   const world = buildTavernWorld({
     getTexture: getCachedTexture,
     requestRender,
+    fireSpriteAnchor: plateUVToWorld(0.215, 0.46, 1.5),
   });
   scene.add(world.group);
 
@@ -605,11 +664,38 @@ function buildScene(
   renderer.domElement.style.height = '100%';
   mount.appendChild(renderer.domElement);
 
+  // ---------- film post chain ----------
+  // The unifier: bloom lifts every emitter (flames, embers, gold) into a
+  // glow; film grain + vignette fuse the live 3D foreground and the
+  // painted plate into one image — the single biggest "real-time CG →
+  // cinema" move. Order matters: bloom operates on linear HDR before
+  // OutputPass (tone map + sRGB); grain + vignette apply display-referred
+  // after it, exactly like photochemical grain on a print.
+  const composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  const bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(1, 1), // resized in updateSize
+    0.38, // strength — present on flames/gold, invisible on mids
+    0.55, // radius
+    0.82, // threshold — only genuine emitters bloom
+  );
+  composer.addPass(bloomPass);
+  composer.addPass(new OutputPass());
+  const vignettePass = new ShaderPass(VignetteShader);
+  vignettePass.uniforms.offset!.value = 1.05;
+  vignettePass.uniforms.darkness!.value = 1.18;
+  composer.addPass(vignettePass);
+  const filmPass = new FilmPass(0.14, false);
+  composer.addPass(filmPass);
+
   const updateSize = () => {
     const w = mount.clientWidth;
     const h = mount.clientHeight;
     if (w === 0 || h === 0) return;
     renderer.setSize(w, h, false);
+    composer.setSize(w, h);
+    composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    bloomPass.setSize(w / 2, h / 2); // half-res bloom — quality/cost sweet spot
     camera.aspect = w / h;
     // Wider vertical fov on narrow/portrait viewports so the seated shot
     // keeps the tray AND the room in frame on phones.
@@ -782,6 +868,8 @@ function buildScene(
     // trayScale on its next beat (setThrowRequest cuts to LEAN right
     // after this), so the framing change rides inside one eased move.
     trayScale = s;
+    fitPlate();
+    world.setAnchorScale(s);
     requestRender();
   };
 
@@ -925,7 +1013,7 @@ function buildScene(
     }
 
     if (renderPending > 0) {
-      renderer.render(scene, camera);
+      composer.render();
       renderPending--;
     }
     raf = requestAnimationFrame(animate);
@@ -939,6 +1027,7 @@ function buildScene(
     removeActiveThrow();
     removeLegacy();
     world.dispose();
+    composer.dispose();
     physics?.dispose();
     tableGeom.dispose();
     skirtGeom.dispose();
