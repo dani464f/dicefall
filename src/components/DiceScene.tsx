@@ -16,6 +16,7 @@ import {
 } from '../lib/skins/sceneResolver';
 import { diceAudio } from '../lib/audio/diceAudio';
 import { diceHaptics } from '../lib/haptics/diceHaptics';
+import { buildTavernWorld } from '../lib/tavernWorld';
 import type { ThrowRequest } from '../hooks/useDiceRoller';
 import type { SceneTheme } from '../types/skins';
 import { DICE_FACES, type DiceType, type RollResult } from '../types/dice';
@@ -263,13 +264,16 @@ function buildScene(
   // and deepens the shadow floor. Light intensities below are tuned FOR
   // this curve; changing the mapping means re-tuning them.
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.12;
+  // Night grade: 1.0 keeps the candle pools warm without lifting the room
+  // out of darkness. (The first cut at 1.12 + bright tints read as
+  // daylight — the tavern lives in the shadows.)
+  renderer.toneMappingExposure = 1.0;
 
   const scene = new THREE.Scene();
-  // A whisper of warm-black fog seats the table into the backdrop and
-  // swallows the table plane's far edge. Backdrop plane opts out (fog:
-  // false on its material) so the painted image stays unfogged.
-  scene.fog = new THREE.Fog(0x070402, 10, 26);
+  // A whisper of warm-black fog pushes the room's far half into gloom —
+  // the tavern recedes instead of ending. Backdrop plane opts out (fog:
+  // false) so the painted depth-glow above the paneling stays warm.
+  scene.fog = new THREE.Fog(0x070402, 9, 24);
 
   // ---------- on-demand rendering (declared early — async texture/HDRI
   // loads arriving later need to dirty the frame) ----------
@@ -282,10 +286,14 @@ function buildScene(
   const requestRender = () => {
     if (renderPending < 2) renderPending = 2;
   };
-  // Cinematic top-down angled camera per the tavern brief.
+  // Cinematic angled camera. The look-at is raised above the tabletop so
+  // the upper third of the frame looks INTO the room (fireplace, beams,
+  // gloom) instead of terminating on an endless table plane — the
+  // "seated at the table" composition.
+  const CAM_LOOK = new THREE.Vector3(0, 0.75, -1.0);
   const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
   camera.position.set(0, 5.5, 6.5);
-  camera.lookAt(0, 0, 0);
+  camera.lookAt(CAM_LOOK);
 
   // --- Skin-driven materials + lighting ---------------------------------
   // The resolver turns the SceneTheme's string IDs into concrete configs.
@@ -408,11 +416,11 @@ function buildScene(
   top.position.copy(resolved.lighting.top.position);
   scene.add(top);
 
-  // --- Painted backdrop (Higgsfield tavern plate) ---
-  // Mounted on a large plane behind the table. Camera direction is fixed
-  // (only distance changes on tray resize) so a static plane reads
-  // correctly at every framing. fog:false — the painting carries its own
-  // depth; toneMapped:false — the plate is pre-graded.
+  // --- Painted depth plate (Higgsfield tavern bokeh) ---
+  // Sits BEHIND the 3D room's back paneling and shows only above it —
+  // the warm out-of-focus glow of "more tavern" beyond the wall line.
+  // fog:false (carries its own depth), toneMapped:false (pre-graded),
+  // dimmed so it reads as distance, not a poster.
   {
     new THREE.TextureLoader().load(
       '/backdrop/tavern.webp',
@@ -422,14 +430,15 @@ function buildScene(
           return;
         }
         tex.colorSpace = THREE.SRGBColorSpace;
-        const backdropGeom = new THREE.PlaneGeometry(38, 21.4);
+        const backdropGeom = new THREE.PlaneGeometry(42, 23.6);
         const backdropMat = new THREE.MeshBasicMaterial({
           map: tex,
           fog: false,
           toneMapped: false,
+          color: 0x9a9a9a, // pre-dim the plate into the gloom
         });
         const backdrop = new THREE.Mesh(backdropGeom, backdropMat);
-        backdrop.position.set(0, 7.5, -12);
+        backdrop.position.set(0, 8.2, -14.4);
         scene.add(backdrop);
         requestRender();
       },
@@ -440,8 +449,15 @@ function buildScene(
     );
   }
 
-  // --- Tabletop (extends past the camera frustum) ---
-  const tableGeom = new THREE.PlaneGeometry(22, 20);
+  // --- The 3D tavern around the table ---
+  const world = buildTavernWorld({
+    getTexture: getCachedTexture,
+    requestRender,
+  });
+  scene.add(world.group);
+
+  // --- Gaming tabletop (a table IN the room, not an endless plane) ---
+  const tableGeom = new THREE.PlaneGeometry(19, 14);
   const tableMat = new THREE.MeshStandardMaterial({
     color: resolved.table.color,
     roughness: resolved.table.roughness,
@@ -673,7 +689,7 @@ function buildScene(
     // set, not an animation: between rolls of the same size nothing
     // moves at all.
     camera.position.copy(CAM_BASE_POS).multiplyScalar(s);
-    camera.lookAt(0, 0, 0);
+    camera.lookAt(CAM_LOOK);
     requestRender();
   };
 
@@ -688,6 +704,14 @@ function buildScene(
   let raf = 0;
   let accumulator = 0;
   let sceneTime = 0;
+  // Ambient life (fire/candle flicker, motes) renders at a capped
+  // cinematic cadence while the tab is visible — a frozen tavern reads
+  // dead. ~24 fps idle; the browser suspends RAF entirely in hidden
+  // tabs, so backgrounded battery cost is still zero. Reduced-motion
+  // disables the loop and leaves a static (but fully lit) room.
+  const AMBIENT_INTERVAL = 1 / 24;
+  let ambientTime = 0;
+  let lastAmbientTick = -1;
   const clock = new THREE.Clock();
   const animate = () => {
     const delta = Math.min(clock.getDelta(), 0.1);
@@ -730,6 +754,20 @@ function buildScene(
 
     if (subSteps > 0 || tweenAnimating || legacyNeedsSim) {
       requestRender();
+    }
+
+    // ---- ambient tavern life ----
+    if (
+      document.documentElement.getAttribute('data-reduced-motion') !== 'true'
+    ) {
+      ambientTime += delta;
+      if (ambientTime - lastAmbientTick >= AMBIENT_INTERVAL) {
+        lastAmbientTick = ambientTime;
+        world.tick(ambientTime);
+        // Single-frame render per ambient tick (≈24 fps idle), not the
+        // 2-frame burst mutations use.
+        if (renderPending < 1) renderPending = 1;
+      }
     }
 
     if (activeThrow) {
@@ -798,6 +836,7 @@ function buildScene(
     ro.disconnect();
     removeActiveThrow();
     removeLegacy();
+    world.dispose();
     physics?.dispose();
     tableGeom.dispose();
     tableMat.dispose();

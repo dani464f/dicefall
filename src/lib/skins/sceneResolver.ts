@@ -79,9 +79,10 @@ export interface ResolvedSceneTheme {
 
 const TABLE_PRESETS: Record<string, TableMaterialConfig> = {
   'wood.walnut': {
-    // Color acts as a tint multiplier over the diffuse map — keep it well
-    // above the old flat value or the grain drowns in black.
-    color: 0x8a6a4a,
+    // Color is a tint multiplier over the diffuse map. The first cut at
+    // 0x8a6a4a read as glowing rust in screenshots — midnight oak needs
+    // the tint pulled far down so only the lit pools show grain.
+    color: 0x4a3826,
     roughness: 0.92,
     metalness: 0.05,
     textures: {
@@ -96,7 +97,7 @@ const TABLE_PRESETS: Record<string, TableMaterialConfig> = {
 
 const TRAY_FLOOR_PRESETS: Record<string, TrayFloorMaterialConfig> = {
   'leather.dark': {
-    color: 0x6a4530,
+    color: 0x453021,
     roughness: 0.88,
     metalness: 0.02,
     textures: {
@@ -111,7 +112,7 @@ const TRAY_FLOOR_PRESETS: Record<string, TrayFloorMaterialConfig> = {
 
 const TRAY_RAIL_PRESETS: Record<string, TrayRailMaterialConfig> = {
   'leather.dark': {
-    color: 0x9a6a45,
+    color: 0x5a422c,
     roughness: 0.7,
     metalness: 0.08,
     textures: {
@@ -134,28 +135,31 @@ const DICE_PRESETS: Record<string, DiceMaterialConfig> = {
 
 const LIGHTING_PRESETS: Record<string, LightingConfig> = {
   'tavern.candle': {
-    ambient: { color: 0xb88a5a, intensity: 0.65 },
-    hemisphere: { sky: 0xbb8a5a, ground: 0x1c0e08, intensity: 0.95 },
+    // Night grade: low global fill, the candle key carries the table,
+    // and the tavernWorld fire/candle lights carry the room. Darkness is
+    // the point — pools of warmth, not a lit set.
+    ambient: { color: 0xb88a5a, intensity: 0.22 },
+    hemisphere: { sky: 0xbb8a5a, ground: 0x160b06, intensity: 0.38 },
     key: {
       color: 0xffc890,
-      intensity: 180,
+      intensity: 150,
       position: new THREE.Vector3(-3.2, 4.6, 3.4),
     },
     rim: {
       color: 0xe2bc7a,
-      intensity: 40,
+      intensity: 30,
       position: new THREE.Vector3(2.8, 3.5, -3),
     },
     top: {
       color: 0xffe2b0,
-      intensity: 1.4,
+      intensity: 0.4,
       position: new THREE.Vector3(0.5, 8, 1),
     },
-    envIntensity: 0.55,
+    envIntensity: 0.4,
   },
   'court.sapphire': {
-    ambient: { color: 0x506488, intensity: 0.55 },
-    hemisphere: { sky: 0x5a7ab8, ground: 0x080d18, intensity: 0.85 },
+    ambient: { color: 0x506488, intensity: 0.3 },
+    hemisphere: { sky: 0x5a7ab8, ground: 0x080d18, intensity: 0.5 },
     key: {
       color: 0x9ab8ff,
       intensity: 180,
@@ -176,8 +180,8 @@ const LIGHTING_PRESETS: Record<string, LightingConfig> = {
     envIntensity: 0.3,
   },
   'vault.rune': {
-    ambient: { color: 0x4a7a5e, intensity: 0.55 },
-    hemisphere: { sky: 0x6ea88a, ground: 0x080f0c, intensity: 0.85 },
+    ambient: { color: 0x4a7a5e, intensity: 0.3 },
+    hemisphere: { sky: 0x6ea88a, ground: 0x080f0c, intensity: 0.5 },
     key: {
       color: 0x9adcb4,
       intensity: 180,
