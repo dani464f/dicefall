@@ -124,8 +124,22 @@ function createD6FaceTexture(value: number, size = 256): THREE.CanvasTexture {
   return tex;
 }
 
+/**
+ * Module-scope shared materials. Every D6 in every throw shows the same six
+ * pip faces, so one materials array serves all meshes for the app lifetime
+ * (three.js explicitly supports sharing materials across meshes). Before
+ * this cache, each D6 painted 6 canvases + created 6 CanvasTextures + 6
+ * materials per die per throw — a 6×D6 roll allocated 36 of each, then
+ * disposed them all on Clear.
+ *
+ * Lifetime note: these are intentionally never disposed. Six 256px canvas
+ * textures ≈ 1.5 MB GPU memory, kept warm for instant re-rolls.
+ */
+let SHARED_D6_MATERIALS: THREE.MeshStandardMaterial[] | null = null;
+
 export function createD6Materials(): THREE.MeshStandardMaterial[] {
-  return D6_FACE_VALUES_BY_AXIS.map(
+  if (SHARED_D6_MATERIALS) return SHARED_D6_MATERIALS;
+  SHARED_D6_MATERIALS = D6_FACE_VALUES_BY_AXIS.map(
     (value) =>
       new THREE.MeshStandardMaterial({
         map: createD6FaceTexture(value),
@@ -133,11 +147,5 @@ export function createD6Materials(): THREE.MeshStandardMaterial[] {
         metalness: 0.1,
       }),
   );
-}
-
-export function disposeMaterials(mats: THREE.MeshStandardMaterial[]): void {
-  for (const m of mats) {
-    m.map?.dispose();
-    m.dispose();
-  }
+  return SHARED_D6_MATERIALS;
 }

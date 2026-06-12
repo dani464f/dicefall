@@ -330,7 +330,7 @@ export function buildFaceBakedDie(
   return { geom, materials };
 }
 
-export function disposeFaceMaterials(materials: THREE.MeshStandardMaterial[]) {
-  for (const m of materials) m.dispose();
-  // Textures are cached & shared across throws — don't dispose them here.
-}
+// NOTE: there is intentionally no dispose helper here anymore. Face-baked
+// bundles are cached at module scope in DiceScene (DIE_VISUAL_CACHE) and
+// shared across every die of a type for the app lifetime — same pattern as
+// FACE_TEXTURES above. Disposing them would break the next throw.

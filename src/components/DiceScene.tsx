@@ -2,11 +2,8 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { loadRapier, type Rapier } from '../lib/physics';
 import { getUpwardFaceValue } from '../lib/faceDetection';
-import {
-  createD6Materials,
-  disposeMaterials,
-} from '../lib/diceFaceTextures';
-import { buildFaceBakedDie, disposeFaceMaterials } from '../lib/dieFaceMaterials';
+import { createD6Materials } from '../lib/diceFaceTextures';
+import { buildFaceBakedDie } from '../lib/dieFaceMaterials';
 import {
   createPentagonalTrapezohedronGeometry,
   getPentagonalTrapezohedronVertices,
@@ -195,6 +192,10 @@ interface LegacyDie {
   mesh: THREE.Mesh;
   tick: (delta: number) => void;
   setIsRolling: (rolling: boolean) => void;
+  /** True while this die still needs simulation/animation frames — used by
+   *  the render loop to decide whether it can idle the physics world and
+   *  skip redrawing a static scene. */
+  isActive: () => boolean;
   dispose: () => void;
 }
 
@@ -346,6 +347,18 @@ function buildScene(
   renderer.domElement.style.height = '100%';
   mount.appendChild(renderer.domElement);
 
+  // ---------- on-demand rendering ----------
+  // The scene is fully static between dice movements (lights and materials
+  // only change via setSceneTheme), so re-rendering identical frames at
+  // 60 fps just burns GPU/battery. `renderPending` counts down to 0 and the
+  // loop skips renderer.render() until something dirties the scene again.
+  // We render 2 frames per dirty event (not 1) so changes that land between
+  // RAF ticks (resize buffer swap, material mutation) settle visibly.
+  let renderPending = 3;
+  const requestRender = () => {
+    if (renderPending < 2) renderPending = 2;
+  };
+
   const updateSize = () => {
     const w = mount.clientWidth;
     const h = mount.clientHeight;
@@ -353,6 +366,7 @@ function buildScene(
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    requestRender();
   };
   updateSize();
   const ro = new ResizeObserver(updateSize);
@@ -372,6 +386,7 @@ function buildScene(
       d.dispose();
     }
     activeThrow = null;
+    requestRender();
   };
 
   const removeLegacy = () => {
@@ -380,6 +395,7 @@ function buildScene(
       d.dispose();
     }
     legacyDice = [];
+    requestRender();
   };
 
   const setOnResult: SceneAPI['setOnResult'] = (cb) => {
@@ -424,6 +440,7 @@ function buildScene(
       startTime: sceneTime,
       committed: false,
     };
+    requestRender();
   };
 
   // -------- legacy RNG-driven path (decorative tumble) --------
@@ -445,10 +462,12 @@ function buildScene(
       scene.add(die.mesh);
       legacyDice.push(die);
     }
+    requestRender();
   };
 
   const setIsRolling: SceneAPI['setIsRolling'] = (rolling) => {
     for (const d of legacyDice) d.setIsRolling(rolling);
+    requestRender();
   };
 
   // ---------- render loop ----------
@@ -465,20 +484,46 @@ function buildScene(
   const clock = new THREE.Clock();
   const animate = () => {
     const delta = Math.min(clock.getDelta(), 0.1);
-    accumulator += delta;
+
+    // ---- simulation gating ----
+    // Rapier auto-sleeps bodies at rest. Once a throw is committed and all
+    // its bodies sleep (we force-sleep settled dice at commit), stepping
+    // the world is pure waste — nothing can move again until a new throw
+    // wakes it. Same for legacy dice. While a throw is in flight
+    // (uncommitted) we always step, so settle/timeout logic is unaffected.
+    const throwNeedsSim =
+      activeThrow !== null &&
+      (!activeThrow.committed ||
+        activeThrow.dice.some((d) => !d.body.isSleeping()));
+    const legacyNeedsSim = legacyDice.some((d) => d.isActive());
+    const needsSim = (throwNeedsSim || legacyNeedsSim) && physics !== null;
+    // Tween dice (no-physics fallback) animate without the world.
+    const tweenAnimating = physics === null && legacyNeedsSim;
+
     let subSteps = 0;
-    while (accumulator >= FIXED_DT && subSteps < MAX_SUBSTEPS) {
-      if (physics) physics.world.step();
-      if (activeThrow) {
-        for (const d of activeThrow.dice) d.tick(activeThrow.dice);
+    if (needsSim) {
+      accumulator += delta;
+      while (accumulator >= FIXED_DT && subSteps < MAX_SUBSTEPS) {
+        physics!.world.step();
+        if (activeThrow) {
+          for (const d of activeThrow.dice) d.tick(activeThrow.dice);
+        }
+        sceneTime += FIXED_DT;
+        accumulator -= FIXED_DT;
+        subSteps++;
       }
-      sceneTime += FIXED_DT;
-      accumulator -= FIXED_DT;
-      subSteps++;
+    } else {
+      // Drop banked time so waking from idle doesn't avalanche-step.
+      accumulator = 0;
     }
     // Legacy decorative dice tween off render-frame delta, which is fine
-    // for them — they don't depend on physics ticks.
+    // for them — they don't depend on physics ticks. Cheap no-op when
+    // they're already at rest.
     for (const d of legacyDice) d.tick(delta);
+
+    if (subSteps > 0 || tweenAnimating || legacyNeedsSim) {
+      requestRender();
+    }
 
     if (activeThrow) {
       if (!activeThrow.committed) {
@@ -509,6 +554,13 @@ function buildScene(
             // user still gets a result rather than a freeze.
             return v ?? Math.floor(Math.random() * faces) + 1;
           });
+          // Force already-settled bodies to sleep so the sim-gating check
+          // above can idle the world deterministically instead of waiting
+          // out Rapier's own sleep timer. A timed-out die that's still
+          // tumbling is left awake — freezing it mid-air would be visible.
+          for (const d of t.dice) {
+            if (d.settlementState() !== 'rolling') d.body.sleep();
+          }
           // Defer to a microtask so React state updates don't run inside
           // the rAF callback's render-side-effect window. The token is
           // captured here so a stale commit (after Clear or re-roll) can
@@ -525,7 +577,10 @@ function buildScene(
       }
     }
 
-    renderer.render(scene, camera);
+    if (renderPending > 0) {
+      renderer.render(scene, camera);
+      renderPending--;
+    }
     raf = requestAnimationFrame(animate);
   };
   raf = requestAnimationFrame(animate);
@@ -578,6 +633,7 @@ function buildScene(
     railMat.color.setHex(next.trayRail.color);
     railMat.roughness = next.trayRail.roughness;
     railMat.metalness = next.trayRail.metalness;
+    requestRender();
   };
 
   return {
@@ -636,6 +692,52 @@ function createPhysics(rapier: Rapier): PhysicsBundle {
 // Throw die (physics-driven, face-detected)
 // ===========================================================================
 
+/**
+ * Module-scope shared visuals — one geometry + materials set per die type,
+ * shared by every mesh of that type for the app lifetime (three.js supports
+ * sharing both across meshes; each mesh carries its own transform).
+ *
+ * Why: the face-baked build is the most expensive part of a throw. Per die
+ * it ran toNonIndexed(), allocated a fresh UV Float32Array, created one
+ * geometry group per triangle, and one MeshStandardMaterial per face —
+ * a 6×D20 throw allocated 6 geometries + 120 materials, then disposed all
+ * of it on the next Clear. The visuals are identical for every die of a
+ * type (face textures were already cached), so build once and share.
+ *
+ * Skin caveat: the face-baked path bakes fixed DIE_BG / DIE_INK colours and
+ * ignores the per-skin dice colour (only the non-baked fallback uses it),
+ * so this cache needs no skin key today. If a future skin re-tints baked
+ * dice faces, key this map by `${type}:${skinId}` and dispose on evict.
+ */
+const DIE_VISUAL_CACHE = new Map<
+  DiceType,
+  {
+    geom: THREE.BufferGeometry;
+    materials: THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[];
+  }
+>();
+
+function getSharedDieVisual(type: DiceType): {
+  geom: THREE.BufferGeometry;
+  materials: THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[];
+} | null {
+  const cached = DIE_VISUAL_CACHE.get(type);
+  if (cached) return cached;
+  const rawGeom = createGeometry(type);
+  if (type === 'd6') {
+    // Pip-baked BoxGeometry path; materials are themselves module-shared
+    // inside diceFaceTextures.
+    const visual = { geom: rawGeom, materials: createD6Materials() };
+    DIE_VISUAL_CACHE.set(type, visual);
+    return visual;
+  }
+  const bundle = buildFaceBakedDie(type, rawGeom);
+  if (!bundle) return null; // caller falls back to per-die plain material
+  const visual = { geom: bundle.geom, materials: bundle.materials };
+  DIE_VISUAL_CACHE.set(type, visual);
+  return visual;
+}
+
 function createThrowDie(
   type: DiceType,
   index: number,
@@ -645,29 +747,27 @@ function createThrowDie(
   diceMetalness: number,
 ): ThrowDie {
   const { rapier, world } = physics;
-  const rawGeom = createGeometry(type);
 
-  // For non-D6 dice, rebuild the geometry with per-face groups + a per-face
-  // materials array so each face actually shows its number. D6 keeps its
-  // pip-baked BoxGeometry path.
+  // Shared geometry + materials per die type (see DIE_VISUAL_CACHE). The
+  // fallback below only triggers if a face table is missing — every current
+  // die type has one, but keep the path so a future die ships safe.
   let geom: THREE.BufferGeometry;
   let materials: THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[];
-  if (type === 'd6') {
-    geom = rawGeom;
-    materials = createD6Materials();
+  let ownsVisual = false;
+  const sharedVisual = getSharedDieVisual(type);
+  if (sharedVisual) {
+    geom = sharedVisual.geom;
+    materials = sharedVisual.materials;
   } else {
-    const bundle = buildFaceBakedDie(type, rawGeom);
-    if (bundle) {
-      geom = bundle.geom;
-      materials = bundle.materials;
-    } else {
-      geom = rawGeom;
-      materials = new THREE.MeshStandardMaterial({
-        color: diceColor,
-        roughness: diceRoughness,
-        metalness: diceMetalness,
-      });
-    }
+    // No face table for this type — plain skin-tinted material, owned by
+    // this die and disposed with it.
+    ownsVisual = true;
+    geom = createGeometry(type);
+    materials = new THREE.MeshStandardMaterial({
+      color: diceColor,
+      roughness: diceRoughness,
+      metalness: diceMetalness,
+    });
   }
   const mesh = new THREE.Mesh(geom, materials);
   mesh.castShadow = true;
@@ -838,15 +938,11 @@ function createThrowDie(
     },
     dispose() {
       world.removeRigidBody(body);
-      geom.dispose();
-      if (Array.isArray(materials)) {
-        if (type === 'd6') {
-          disposeMaterials(materials);
-        } else {
-          disposeFaceMaterials(materials);
-        }
-      } else {
-        materials.dispose();
+      // Shared visuals (DIE_VISUAL_CACHE) live for the app lifetime — only
+      // the rare fallback path owns its geometry + material.
+      if (ownsVisual) {
+        geom.dispose();
+        if (!Array.isArray(materials)) materials.dispose();
       }
     },
   };
@@ -996,6 +1092,10 @@ function createLegacyPhysicsDie(
     setIsRolling(r) {
       isRolling = r;
     },
+    isActive() {
+      // Needs sim while the body is awake; Rapier sleeps it at rest.
+      return !body.isSleeping();
+    },
     dispose() {
       world.removeRigidBody(body);
       geom.dispose();
@@ -1061,6 +1161,11 @@ function createTweenDie(
       mesh.rotation.z += spinFactor * spinAxis[2];
       const scale = Math.min(elapsed / 0.15, 1);
       mesh.scale.setScalar(scale);
+    },
+    isActive() {
+      // The tween keeps a slow residual spin for as long as the roll is
+      // "live"; once setIsRolling(false) snaps it to rest it's static.
+      return isRolling;
     },
     setIsRolling(r) {
       isRolling = r;
