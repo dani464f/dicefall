@@ -660,13 +660,46 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
       add(stoolGeom, furnitureMat, sx, FLOOR_Y + 0.75, sz, { cast: true });
     }
 
-    // Barrels: cluster right-back corner + one on its side.
-    const barrelGeom = new THREE.CylinderGeometry(0.85, 0.95, 2.1, 14);
-    add(barrelGeom, barWoodMat, 12.6, FLOOR_Y + 1.05, -11.8, { cast: true });
-    add(barrelGeom, barWoodMat, 11.0, FLOOR_Y + 1.05, -12.6, { cast: true });
-    const sideBarrel = add(barrelGeom, barWoodMat, 12.2, FLOOR_Y + 0.95, -9.2, { cast: true });
-    sideBarrel.rotation.z = Math.PI / 2;
-    sideBarrel.rotation.y = 0.4;
+    // Barrels: lathe-turned staves profile (bulge at the waist) + two
+    // iron hoops each — the curved silhouette breaks the boxy-room read
+    // that straight cylinders reinforced.
+    const barrelProfile: THREE.Vector2[] = [];
+    for (let i = 0; i <= 8; i++) {
+      const t = i / 8; // 0 bottom → 1 top
+      const bulge = 0.78 + Math.sin(t * Math.PI) * 0.17; // waist bulge
+      barrelProfile.push(new THREE.Vector2(bulge, t * 2.1));
+    }
+    const barrelGeom = new THREE.LatheGeometry(barrelProfile, 16);
+    track(barrelGeom);
+    const hoopGeom = new THREE.TorusGeometry(0.86, 0.035, 6, 20);
+    track(hoopGeom);
+    const mkBarrel = (x: number, z: number, onSide = false) => {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(barrelGeom, barWoodMat);
+      body.castShadow = true;
+      body.receiveShadow = true;
+      g.add(body);
+      for (const hy of [0.45, 1.65]) {
+        const hoop = new THREE.Mesh(hoopGeom, ironMat);
+        hoop.rotation.x = Math.PI / 2;
+        hoop.position.y = hy;
+        // Match the profile radius at hoop height.
+        const r = 0.78 + Math.sin((hy / 2.1) * Math.PI) * 0.17;
+        hoop.scale.setScalar(r / 0.86 + 0.03);
+        g.add(hoop);
+      }
+      if (onSide) {
+        g.rotation.z = Math.PI / 2;
+        g.rotation.y = 0.4;
+        g.position.set(x, FLOOR_Y + 0.95, z);
+      } else {
+        g.position.set(x, FLOOR_Y, z);
+      }
+      group.add(g);
+    };
+    mkBarrel(12.6, -11.8);
+    mkBarrel(11.0, -12.6);
+    mkBarrel(12.2, -9.2, true);
   }
   // (declared before mkTable uses it)
 

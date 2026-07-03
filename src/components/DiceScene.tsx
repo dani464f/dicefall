@@ -206,7 +206,36 @@ interface ActiveThrow {
   dice: ThrowDie[];
   startTime: number;
   committed: boolean;
+  /** Soft AO discs spawned under settled dice at commit — grounds them
+   *  on the leather on the side the candle shadow doesn't cover. */
+  decals: THREE.Mesh[];
 }
+
+// Shared radial AO texture for the grounding decals (module scope — one
+// canvas for the app lifetime).
+let AO_DECAL_TEX: THREE.CanvasTexture | null = null;
+function getAODecalTexture(): THREE.CanvasTexture {
+  if (AO_DECAL_TEX) return AO_DECAL_TEX;
+  const S = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = S;
+  const ctx = canvas.getContext('2d')!;
+  const g = ctx.createRadialGradient(S / 2, S / 2, 2, S / 2, S / 2, S / 2);
+  g.addColorStop(0, 'rgba(0,0,0,0.55)');
+  g.addColorStop(0.55, 'rgba(0,0,0,0.28)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+  AO_DECAL_TEX = new THREE.CanvasTexture(canvas);
+  return AO_DECAL_TEX;
+}
+const AO_DECAL_GEOM = new THREE.PlaneGeometry(1, 1);
+const AO_DECAL_MAT = new THREE.MeshBasicMaterial({
+  map: null, // set lazily — canvas needs the DOM
+  transparent: true,
+  depthWrite: false,
+  fog: false,
+});
 
 interface LegacyDie {
   mesh: THREE.Mesh;
@@ -694,6 +723,9 @@ function buildScene(
       scene.remove(d.mesh);
       d.dispose();
     }
+    // Decals share geometry/material/texture at module scope — only the
+    // meshes leave the scene.
+    for (const decal of activeThrow.decals) scene.remove(decal);
     activeThrow = null;
     requestRender();
   };
@@ -759,6 +791,7 @@ function buildScene(
       dice,
       startTime: sceneTime,
       committed: false,
+      decals: [],
     };
     requestRender();
   };
@@ -1002,6 +1035,23 @@ function buildScene(
           for (const d of t.dice) {
             if (d.settlementState() !== 'rolling') d.body.sleep();
           }
+          // Ground each settled die with a soft AO disc — the candle
+          // shadow only covers one side; this seats the opposite rim.
+          if (!AO_DECAL_MAT.map) {
+            AO_DECAL_MAT.map = getAODecalTexture();
+            AO_DECAL_MAT.needsUpdate = true;
+          }
+          for (const d of t.dice) {
+            if (d.settlementState() === 'rolling') continue;
+            const p = d.body.translation();
+            const decal = new THREE.Mesh(AO_DECAL_GEOM, AO_DECAL_MAT);
+            decal.rotation.x = -Math.PI / 2;
+            decal.position.set(p.x, 0.012, p.z);
+            const s = DIE_RADIUS[t.request.diceType] * 3.1;
+            decal.scale.set(s, s, 1);
+            scene.add(decal);
+            t.decals.push(decal);
+          }
           // Defer to a microtask so React state updates don't run inside
           // the rAF callback's render-side-effect window. The token is
           // captured here so a stale commit (after Clear or re-roll) can
@@ -1159,7 +1209,12 @@ function createPhysics(rapier: Rapier): PhysicsBundle {
     const body = world.createRigidBody(
       rapier.RigidBodyDesc.fixed().setTranslation(pos.x, pos.y, pos.z),
     );
-    world.createCollider(desc.setRestitution(0.45).setFriction(0.55), body);
+    // Static restitution 0.33 (was 0.45), paired with dice going 0.18 →
+    // 0.30: Rapier averages the pair, so dice-vs-wood stays at the tuned
+    // (0.18+0.45)/2 = 0.315 ≈ (0.30+0.33)/2, while dice-vs-DICE rises
+    // 0.18 → 0.30 — livelier clatter when dice hit each other, identical
+    // feel off the tray.
+    world.createCollider(desc.setRestitution(0.33).setFriction(0.55), body);
     into.push(body);
   };
 
@@ -1322,13 +1377,18 @@ function createThrowDie(
   const lvy = 0.2 + Math.random() * 0.4;
   const lvz = -2.8 - Math.random() * 1.0;
 
+  // Wrist-flick spin: a real throw tumbles the die primarily around the
+  // axis PERPENDICULAR to its travel (rolling forward), with only modest
+  // wobble on the other axes. Travel is -z, so the rolling axis is -x
+  // (v = ω × r at the contact point). Uniform ±14 random on all axes
+  // read as dice spinning in place rather than being thrown.
   const bodyDesc = rapier.RigidBodyDesc.dynamic()
     .setTranslation(startX, startY, startZ)
     .setLinvel(lvx, lvy, lvz)
     .setAngvel({
-      x: (Math.random() - 0.5) * 14,
-      y: (Math.random() - 0.5) * 14,
-      z: (Math.random() - 0.5) * 14,
+      x: -(9 + Math.random() * 7), // forward tumble, always
+      y: (Math.random() - 0.5) * 7, // yaw wobble
+      z: (Math.random() - 0.5) * 5, // roll wobble
     })
     .setLinearDamping(0.55)
     .setAngularDamping(1.4);
@@ -1340,7 +1400,7 @@ function createThrowDie(
   const body = world.createRigidBody(bodyDesc);
 
   const colliderDesc = createColliderDesc(rapier, type)
-    .setRestitution(0.18)
+    .setRestitution(0.3) // see the static-collider note: dice-wood pair unchanged
     .setFriction(0.95)
     .setDensity(1.8);
   world.createCollider(colliderDesc, body);
@@ -1517,23 +1577,36 @@ function getHullVerts(type: DiceType): Float32Array | null {
   return verts;
 }
 
+/** Collider edge rounding. Real dice have soft edges — a rounded hull
+ *  rolls over its edges instead of pivoting on razor-sharp vertices, so
+ *  dice tumble a beat longer and settle with less "clack-stop". Rapier's
+ *  round shapes INFLATE outward by the radius; 0.025 on a 0.55–0.6 die
+ *  is ~4%, well inside the settle-ceiling margin (DIE_RADIUS × 1.5). */
+const HULL_BEVEL = 0.025;
+
 function createColliderDesc(
   rapier: Rapier,
   type: DiceType,
 ): InstanceType<Rapier['ColliderDesc']> {
   if (type === 'd6') {
-    return rapier.ColliderDesc.cuboid(0.375, 0.375, 0.375);
+    // Shrink the half-extents by the bevel so the inflated shape matches
+    // the visual cube instead of outgrowing it.
+    const h = 0.375 - HULL_BEVEL;
+    return rapier.ColliderDesc.roundCuboid(h, h, h, HULL_BEVEL);
   }
   if (type === 'd10' || type === 'd100') {
     const verts = getPentagonalTrapezohedronVertices(0.6);
     return (
-      rapier.ColliderDesc.convexHull(verts) ?? rapier.ColliderDesc.ball(0.55)
+      rapier.ColliderDesc.roundConvexHull(verts, HULL_BEVEL) ??
+      rapier.ColliderDesc.convexHull(verts) ??
+      rapier.ColliderDesc.ball(0.55)
     );
   }
   const verts = getHullVerts(type);
   if (!verts) return rapier.ColliderDesc.ball(0.55);
   const fallbackRadius = type === 'd4' ? 0.45 : 0.55;
   return (
+    rapier.ColliderDesc.roundConvexHull(verts, HULL_BEVEL) ??
     rapier.ColliderDesc.convexHull(verts) ??
     rapier.ColliderDesc.ball(fallbackRadius)
   );

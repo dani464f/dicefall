@@ -28,6 +28,134 @@ const DIE_INK = '#f1ce85';
 
 const FACE_TEXTURES = new Map<string, THREE.CanvasTexture>();
 
+// ---------------------------------------------------------------------------
+// EDGE-BEVEL NORMAL MAPS — the anti-"razor-sharp CG edge" trick. A band
+// along each face's UV border bends the shading normal outward, so light
+// wraps the rim exactly like a physical die's rounded edge, without any
+// geometry change. Two shared maps cover every polyhedral die:
+//   - triangle pillow: d4 / d8 / d20 (equilateral UV per face)
+//   - radial pillow:   d12 pentagons + d10/d100 kites (radial UVs
+//     converging at (0.5, 0.5) with perimeter at radius UV_R)
+// Normal maps sample in LINEAR space (no SRGB tag). Bend math runs in UV
+// space (v up); pixels write at y = (1 - v) to match flipY sampling.
+// ---------------------------------------------------------------------------
+const BEVEL_BAND = 0.085; // UV width of the rounded rim
+const BEVEL_MAX = 0.6; // max tangent-space deflection (sin of bend angle)
+
+function encodeNormalPixel(
+  data: Uint8ClampedArray,
+  idx: number,
+  nx: number,
+  ny: number,
+  nz: number,
+): void {
+  data[idx] = Math.round((nx * 0.5 + 0.5) * 255);
+  data[idx + 1] = Math.round((ny * 0.5 + 0.5) * 255);
+  data[idx + 2] = Math.round((nz * 0.5 + 0.5) * 255);
+  data[idx + 3] = 255;
+}
+
+function bevelRamp(distInsideEdge: number): number {
+  // 0 at band's inner boundary → BEVEL_MAX at the edge itself.
+  if (distInsideEdge > BEVEL_BAND) return 0;
+  const t = 1 - distInsideEdge / BEVEL_BAND;
+  return Math.pow(t, 1.7) * BEVEL_MAX;
+}
+
+let TRI_PILLOW: THREE.CanvasTexture | null = null;
+function getTrianglePillowNormal(): THREE.CanvasTexture {
+  if (TRI_PILLOW) return TRI_PILLOW;
+  const S = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = S;
+  const ctx = canvas.getContext('2d')!;
+  const img = ctx.createImageData(S, S);
+  const verts: Array<[number, number]> = [UV_APEX, UV_BL, UV_BR];
+  const cx = 0.5;
+  const cy = 0.5;
+  // Precompute outward edge normals.
+  const edges = verts.map((a, i) => {
+    const b = verts[(i + 1) % 3]!;
+    const ex = b[0] - a[0];
+    const ey = b[1] - a[1];
+    const len = Math.hypot(ex, ey);
+    let nx = ey / len;
+    let ny = -ex / len;
+    // Ensure the normal points away from the centroid.
+    if (nx * (cx - a[0]) + ny * (cy - a[1]) > 0) {
+      nx = -nx;
+      ny = -ny;
+    }
+    return { ax: a[0], ay: a[1], nx, ny };
+  });
+  for (let py = 0; py < S; py++) {
+    const v = 1 - (py + 0.5) / S;
+    for (let px = 0; px < S; px++) {
+      const u = (px + 0.5) / S;
+      // Signed distance to each edge line (negative = inside).
+      let best = -Infinity;
+      let bx = 0;
+      let by = 0;
+      for (const e of edges) {
+        const d = (u - e.ax) * e.nx + (v - e.ay) * e.ny;
+        if (d > best) {
+          best = d;
+          bx = e.nx;
+          by = e.ny;
+        }
+      }
+      const s = best >= 0 ? BEVEL_MAX : bevelRamp(-best);
+      const nz = Math.sqrt(Math.max(0, 1 - s * s));
+      encodeNormalPixel(img.data, (py * S + px) * 4, bx * s, by * s, nz);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  TRI_PILLOW = new THREE.CanvasTexture(canvas);
+  TRI_PILLOW.needsUpdate = true;
+  return TRI_PILLOW;
+}
+
+let RADIAL_PILLOW: THREE.CanvasTexture | null = null;
+function getRadialPillowNormal(): THREE.CanvasTexture {
+  if (RADIAL_PILLOW) return RADIAL_PILLOW;
+  const S = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = S;
+  const ctx = canvas.getContext('2d')!;
+  const img = ctx.createImageData(S, S);
+  const R = UV_R;
+  for (let py = 0; py < S; py++) {
+    const v = 1 - (py + 0.5) / S;
+    for (let px = 0; px < S; px++) {
+      const u = (px + 0.5) / S;
+      const dx = u - 0.5;
+      const dy = v - 0.5;
+      const r = Math.hypot(dx, dy);
+      const s = r >= R ? BEVEL_MAX : bevelRamp(R - r);
+      const inv = r > 1e-5 ? 1 / r : 0;
+      const nz = Math.sqrt(Math.max(0, 1 - s * s));
+      encodeNormalPixel(
+        img.data,
+        (py * S + px) * 4,
+        dx * inv * s,
+        dy * inv * s,
+        nz,
+      );
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  RADIAL_PILLOW = new THREE.CanvasTexture(canvas);
+  RADIAL_PILLOW.needsUpdate = true;
+  return RADIAL_PILLOW;
+}
+
+/** Die types whose faces are single UV triangles (vs radial fans). */
+const TRIANGLE_FACED: ReadonlySet<DiceType> = new Set<DiceType>([
+  'd4',
+  'd8',
+  'd20',
+]);
+
 /**
  * Equilateral UV triangle centered in the canvas, so the triangle's centroid
  * is at exactly (0.5, 0.5). That lets us paint the glyph at the canvas
@@ -331,10 +459,16 @@ export function buildFaceBakedDie(
   // which then leaked into the streak pass as ghost-numeral copies. High
   // roughness + damped specularIntensity keeps faces matte and readable;
   // the remaining sheen comes from the (rough) clearcoat only.
+  const bevelNormal = TRIANGLE_FACED.has(diceType)
+    ? getTrianglePillowNormal()
+    : getRadialPillowNormal();
   const materials = entries.map(
     (entry) =>
       new THREE.MeshPhysicalMaterial({
         map: createTriangleFaceTexture(entry.value),
+        // Baked rim bevel — light wraps the face borders like a real
+        // die's rounded edge (see the pillow-normal generators above).
+        normalMap: bevelNormal,
         roughness: 0.62,
         metalness: 0.1,
         specularIntensity: 0.4,

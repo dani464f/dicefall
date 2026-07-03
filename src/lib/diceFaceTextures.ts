@@ -135,6 +135,52 @@ function createD6FaceTexture(value: number, size = 256): THREE.CanvasTexture {
  * Lifetime note: these are intentionally never disposed. Six 256px canvas
  * textures ≈ 1.5 MB GPU memory, kept warm for instant re-rolls.
  */
+// Square pillow normal — bends shading normals outward in a band along
+// the four UV borders so the cube's edges catch light like rounded
+// resin instead of razor-sharp CG. BoxGeometry maps each face to the
+// full [0,1]² UV square, so one shared map serves all six faces.
+let SQUARE_PILLOW: THREE.CanvasTexture | null = null;
+function getSquarePillowNormal(): THREE.CanvasTexture {
+  if (SQUARE_PILLOW) return SQUARE_PILLOW;
+  const S = 256;
+  const BAND = 0.075;
+  const MAX = 0.6;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = S;
+  const ctx = canvas.getContext('2d')!;
+  const img = ctx.createImageData(S, S);
+  for (let py = 0; py < S; py++) {
+    const v = 1 - (py + 0.5) / S;
+    for (let px = 0; px < S; px++) {
+      const u = (px + 0.5) / S;
+      // Push toward each border within the band; corners blend both axes.
+      let nx = 0;
+      let ny = 0;
+      if (u < BAND) nx = -(1 - u / BAND);
+      else if (u > 1 - BAND) nx = 1 - (1 - u) / BAND;
+      if (v < BAND) ny = -(1 - v / BAND);
+      else if (v > 1 - BAND) ny = 1 - (1 - v) / BAND;
+      const m = Math.hypot(nx, ny);
+      let s = 0;
+      if (m > 0) {
+        s = Math.pow(Math.min(1, m), 1.7) * MAX;
+        nx /= m;
+        ny /= m;
+      }
+      const nz = Math.sqrt(Math.max(0, 1 - s * s));
+      const idx = (py * S + px) * 4;
+      img.data[idx] = Math.round((nx * s * 0.5 + 0.5) * 255);
+      img.data[idx + 1] = Math.round((ny * s * 0.5 + 0.5) * 255);
+      img.data[idx + 2] = Math.round((nz * 0.5 + 0.5) * 255);
+      img.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  SQUARE_PILLOW = new THREE.CanvasTexture(canvas);
+  SQUARE_PILLOW.needsUpdate = true;
+  return SQUARE_PILLOW;
+}
+
 let SHARED_D6_MATERIALS: THREE.MeshPhysicalMaterial[] | null = null;
 
 export function createD6Materials(): THREE.MeshPhysicalMaterial[] {
@@ -147,6 +193,7 @@ export function createD6Materials(): THREE.MeshPhysicalMaterial[] {
       // base layer is env-hot.
       new THREE.MeshPhysicalMaterial({
         map: createD6FaceTexture(value),
+        normalMap: getSquarePillowNormal(), // rounded-edge light wrap
         roughness: 0.62,
         metalness: 0.08,
         specularIntensity: 0.4,
