@@ -22,8 +22,12 @@ const STREAK_SHADER = {
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
     uTexel: { value: new THREE.Vector2(1 / 1024, 1 / 1024) },
-    uThreshold: { value: 1.15 },
-    uStrength: { value: 0.55 },
+    // Threshold sits ABOVE anything a lit surface (including dice
+    // specular) reaches in linear HDR — only stacked flame-sprite cores
+    // and fire-lit hotspots may streak. 1.15 let dice glints smear into
+    // horizontal lines while tumbling.
+    uThreshold: { value: 1.5 },
+    uStrength: { value: 0.35 },
     uTint: { value: new THREE.Color(0.75, 0.85, 1.25) },
   },
   vertexShader: /* glsl */ `
@@ -53,10 +57,15 @@ const STREAK_SHADER = {
       // the streak should cross a third of the frame off a hot flame.
       vec3 streak = vec3(0.0);
       float wsum = 0.0;
+      // LINEAR tap spacing. The first cut used quadratic offsets, which
+      // placed discrete far-apart samples — bright glyphs rendered as
+      // ghost COPIES marching across the frame instead of a smear
+      // (verified in the frame harness). Overlapping linear taps read
+      // as one continuous anamorphic line.
       for (int i = 1; i <= 12; i++) {
         float fi = float(i);
-        float w = exp(-fi * 0.32);
-        float off = fi * fi * 1.9 * uTexel.x; // quadratic spread
+        float w = exp(-fi * 0.38);
+        float off = fi * 5.0 * uTexel.x;
         streak += (brights(vUv + vec2(off, 0.0)) +
                    brights(vUv - vec2(off, 0.0))) * w;
         wsum += 2.0 * w;
@@ -70,7 +79,9 @@ const STREAK_SHADER = {
 const CINEMA_SHADER = {
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
-    uCA: { value: 0.0016 },
+    // 0.0016 split colors visibly on dice near the frame edges
+    // (harness-verified blue/orange face fringing) — halved.
+    uCA: { value: 0.0009 },
     uShadowTint: { value: new THREE.Color(0.92, 1.0, 1.12) }, // teal-ward
     uHighTint: { value: new THREE.Color(1.06, 1.0, 0.9) }, // amber-ward
     uToneAmount: { value: 0.55 },

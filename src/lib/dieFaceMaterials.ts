@@ -318,19 +318,29 @@ export function buildFaceBakedDie(
   }
   geom.computeVertexNormals();
 
-  // Physical material with clearcoat — the dice read as lacquered cast
-  // resin. The clearcoat layer picks up the warm HDRI hotspots as sharp
-  // glints while the base stays deep and dark. envMapIntensity below 1
-  // keeps the gold numerals from washing out.
+  // Physical material with clearcoat — lacquered cast resin. The glint
+  // comes from the CLEARCOAT layer catching the point lights; the base
+  // layer is kept dielectric and env-quiet. The first cut (metalness
+  // 0.42, envMapIntensity 0.9) turned every flat facet into a mirror for
+  // the HDRI's tungsten hotspots — whole faces flashed while tumbling
+  // and the HDR spikes leaked into the bloom/streak passes ("weird light
+  // reflecting effect"). Resin, not chrome.
+  // Verified via the __dfDebug frame harness: at roughness 0.42 the
+  // 150-intensity candle key painted face-WIDE white speculars on flat
+  // facets (GGX lobe covers the whole face when the half-vector aligns),
+  // which then leaked into the streak pass as ghost-numeral copies. High
+  // roughness + damped specularIntensity keeps faces matte and readable;
+  // the remaining sheen comes from the (rough) clearcoat only.
   const materials = entries.map(
     (entry) =>
       new THREE.MeshPhysicalMaterial({
         map: createTriangleFaceTexture(entry.value),
-        roughness: 0.34,
-        metalness: 0.42,
-        clearcoat: 0.6,
-        clearcoatRoughness: 0.22,
-        envMapIntensity: 0.9,
+        roughness: 0.62,
+        metalness: 0.1,
+        specularIntensity: 0.4,
+        clearcoat: 0.35,
+        clearcoatRoughness: 0.32,
+        envMapIntensity: 0.35,
       }),
   );
 

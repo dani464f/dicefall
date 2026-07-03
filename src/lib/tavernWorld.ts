@@ -242,7 +242,9 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
     new THREE.MeshStandardMaterial({
       color: 0x0a0e16,
       emissive: 0x4a5c80,
-      emissiveIntensity: 0.55,
+      // Raised alongside the bloom-threshold bump (0.82 → 0.95) so the
+      // moonlit panes stay above the bar and keep their glow.
+      emissiveIntensity: 1.4,
       roughness: 0.4,
       metalness: 0.0,
     }),

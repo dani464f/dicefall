@@ -629,9 +629,12 @@ function buildScene(
   composer.addPass(bokehPass);
   const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(1, 1), // resized in updateSize
-    0.38, // strength — present on flames/gold, invisible on mids
+    0.34, // strength — present on flames/embers, invisible on mids
     0.55, // radius
-    0.82, // threshold — only genuine emitters bloom
+    // Threshold above what a light-lit surface reaches: dice faces
+    // catching the key light must NOT bloom (they read as emitting).
+    // Flames/embers are additive + toneMapped:false, far above this.
+    0.95,
   );
   composer.addPass(bloomPass);
   // Anamorphic streaks in linear HDR — flames + window panes smear into
@@ -646,7 +649,7 @@ function buildScene(
   vignettePass.uniforms.offset!.value = 1.05;
   vignettePass.uniforms.darkness!.value = 1.18;
   composer.addPass(vignettePass);
-  const filmPass = new FilmPass(0.14, false);
+  const filmPass = new FilmPass(0.1, false);
   composer.addPass(filmPass);
 
   const updateSize = () => {
@@ -858,8 +861,11 @@ function buildScene(
   let ambientTime = 0;
   let lastAmbientTick = -1;
   const clock = new THREE.Clock();
-  const animate = () => {
-    const delta = Math.min(clock.getDelta(), 0.1);
+  // The frame body is separated from the RAF wrapper so the dev-only
+  // debug hook (below) can step it manually with a fixed delta — that's
+  // how we screenshot deterministic mid-tumble frames in environments
+  // where RAF is suspended (hidden tabs, headless verification).
+  const frameBody = (delta: number) => {
 
     // ---- simulation gating ----
     // Rapier auto-sleeps bodies at rest. Once a throw is committed and all
@@ -1012,9 +1018,40 @@ function buildScene(
       composer.render();
       renderPending--;
     }
+  };
+  const animate = () => {
+    frameBody(Math.min(clock.getDelta(), 0.1));
     raf = requestAnimationFrame(animate);
   };
   raf = requestAnimationFrame(animate);
+
+  // ---------- dev-only visual test harness ----------
+  // Lets an automated check drive the REAL pipeline without RAF:
+  //   __dfDebug.throw('d20', 6)      spawn a physics throw
+  //   __dfDebug.frame(1/60)          step sim + render one frame
+  //   __dfDebug.snap(720)            JPEG dataURL of the last render
+  // toDataURL is called in the same task as the render, so no
+  // preserveDrawingBuffer needed. Tree-shaken from production builds.
+  if (import.meta.env.DEV && typeof window !== 'undefined') {
+    (window as unknown as Record<string, unknown>).__dfDebug = {
+      frame: (dt: number) => {
+        if (renderPending < 1) renderPending = 1;
+        frameBody(dt);
+      },
+      snap: (w = 720, q = 0.78): string => {
+        const src = renderer.domElement;
+        const c = document.createElement('canvas');
+        const scale = w / src.width;
+        c.width = w;
+        c.height = Math.round(src.height * scale);
+        c.getContext('2d')!.drawImage(src, 0, 0, c.width, c.height);
+        return c.toDataURL('image/jpeg', q);
+      },
+      throw: (diceType: DiceType, quantity: number) =>
+        setThrowRequest({ token: Date.now(), diceType, quantity }),
+      clear: () => setThrowRequest(null),
+    };
+  }
 
   const cleanup = () => {
     sceneDisposed = true;

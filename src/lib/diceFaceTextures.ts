@@ -141,15 +141,18 @@ export function createD6Materials(): THREE.MeshPhysicalMaterial[] {
   if (SHARED_D6_MATERIALS) return SHARED_D6_MATERIALS;
   SHARED_D6_MATERIALS = D6_FACE_VALUES_BY_AXIS.map(
     (value) =>
-      // Clearcoat to match the polyhedral dice — lacquered bone-black cube
-      // with warm glints from the environment map.
+      // Clearcoat to match the polyhedral dice — lacquered bone-black cube.
+      // Env influence kept low for the same reason as dieFaceMaterials:
+      // flat faces mirror HDRI hotspots into face-wide flashes if the
+      // base layer is env-hot.
       new THREE.MeshPhysicalMaterial({
         map: createD6FaceTexture(value),
-        roughness: 0.48,
-        metalness: 0.12,
-        clearcoat: 0.55,
-        clearcoatRoughness: 0.25,
-        envMapIntensity: 0.85,
+        roughness: 0.62,
+        metalness: 0.08,
+        specularIntensity: 0.4,
+        clearcoat: 0.35,
+        clearcoatRoughness: 0.32,
+        envMapIntensity: 0.35,
       }),
   );
   return SHARED_D6_MATERIALS;
