@@ -16,12 +16,14 @@ import {
 } from '../lib/cinemaPasses';
 import { loadRapier, type Rapier } from '../lib/physics';
 import { getUpwardFaceValue } from '../lib/faceDetection';
-import { createD6Materials } from '../lib/diceFaceTextures';
-import { buildFaceBakedDie } from '../lib/dieFaceMaterials';
 import {
-  createPentagonalTrapezohedronGeometry,
-  getPentagonalTrapezohedronVertices,
-} from '../lib/d10Geometry';
+  createAODecal,
+  createColliderDesc,
+  createGeometry,
+  DIE_RADIUS,
+  getSharedDieVisual,
+} from '../lib/dieAssets';
+import { getCachedTexture } from '../lib/textureCache';
 import {
   resolveSceneTheme,
   type ResolvedSceneTheme,
@@ -211,31 +213,6 @@ interface ActiveThrow {
   decals: THREE.Mesh[];
 }
 
-// Shared radial AO texture for the grounding decals (module scope — one
-// canvas for the app lifetime).
-let AO_DECAL_TEX: THREE.CanvasTexture | null = null;
-function getAODecalTexture(): THREE.CanvasTexture {
-  if (AO_DECAL_TEX) return AO_DECAL_TEX;
-  const S = 128;
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = S;
-  const ctx = canvas.getContext('2d')!;
-  const g = ctx.createRadialGradient(S / 2, S / 2, 2, S / 2, S / 2, S / 2);
-  g.addColorStop(0, 'rgba(0,0,0,0.55)');
-  g.addColorStop(0.55, 'rgba(0,0,0,0.28)');
-  g.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, S, S);
-  AO_DECAL_TEX = new THREE.CanvasTexture(canvas);
-  return AO_DECAL_TEX;
-}
-const AO_DECAL_GEOM = new THREE.PlaneGeometry(1, 1);
-const AO_DECAL_MAT = new THREE.MeshBasicMaterial({
-  map: null, // set lazily — canvas needs the DOM
-  transparent: true,
-  depthWrite: false,
-  fog: false,
-});
 
 interface LegacyDie {
   mesh: THREE.Mesh;
@@ -261,42 +238,6 @@ const SETTLE_ANG_VEL = 0.08;
 const NUDGE_MAX = 2;
 const NUDGE_IMPULSE_Y = 0.7;
 const NUDGE_TORQUE_MAG = 0.25;
-
-// ---------------------------------------------------------------------------
-// Shared texture cache — surfaces (and the backdrop) reuse loaded textures
-// across scene rebuilds (StrictMode double-mount, skin switches). Never
-// disposed; total GPU residency is a few MB.
-// ---------------------------------------------------------------------------
-const TEXTURE_CACHE = new Map<string, THREE.Texture>();
-
-/**
- * `repeat` is part of the cache key: THREE.Texture carries tiling on the
- * texture object itself, so two materials wanting different repeats of
- * the same image need two texture instances (image bytes still come from
- * the browser HTTP cache; only the GPU upload duplicates).
- */
-function getCachedTexture(
-  url: string,
-  srgb: boolean,
-  onLoad: () => void,
-  repeat: [number, number] = [1, 1],
-): THREE.Texture {
-  const key = `${url}|${srgb ? 's' : 'l'}|${repeat[0]}x${repeat[1]}`;
-  const cached = TEXTURE_CACHE.get(key);
-  if (cached) return cached;
-  const tex = new THREE.TextureLoader().load(url, onLoad, undefined, () => {
-    // 404 / decode failure — leave the material flat-colored. The console
-    // notes it; the scene must never crash over a missing map.
-    console.warn(`[DiceScene] texture failed to load: ${url}`);
-  });
-  if (srgb) tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(repeat[0], repeat[1]);
-  tex.anisotropy = 8;
-  TEXTURE_CACHE.set(key, tex);
-  return tex;
-}
 
 function buildScene(
   mount: HTMLDivElement,
@@ -1037,18 +978,10 @@ function buildScene(
           }
           // Ground each settled die with a soft AO disc — the candle
           // shadow only covers one side; this seats the opposite rim.
-          if (!AO_DECAL_MAT.map) {
-            AO_DECAL_MAT.map = getAODecalTexture();
-            AO_DECAL_MAT.needsUpdate = true;
-          }
           for (const d of t.dice) {
             if (d.settlementState() === 'rolling') continue;
             const p = d.body.translation();
-            const decal = new THREE.Mesh(AO_DECAL_GEOM, AO_DECAL_MAT);
-            decal.rotation.x = -Math.PI / 2;
-            decal.position.set(p.x, 0.012, p.z);
-            const s = DIE_RADIUS[t.request.diceType] * 3.1;
-            decal.scale.set(s, s, 1);
+            const decal = createAODecal(p.x, p.z, t.request.diceType);
             scene.add(decal);
             t.decals.push(decal);
           }
@@ -1288,35 +1221,6 @@ function createPhysics(rapier: Rapier): PhysicsBundle {
  * so this cache needs no skin key today. If a future skin re-tints baked
  * dice faces, key this map by `${type}:${skinId}` and dispose on evict.
  */
-const DIE_VISUAL_CACHE = new Map<
-  DiceType,
-  {
-    geom: THREE.BufferGeometry;
-    materials: THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[];
-  }
->();
-
-function getSharedDieVisual(type: DiceType): {
-  geom: THREE.BufferGeometry;
-  materials: THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[];
-} | null {
-  const cached = DIE_VISUAL_CACHE.get(type);
-  if (cached) return cached;
-  const rawGeom = createGeometry(type);
-  if (type === 'd6') {
-    // Pip-baked BoxGeometry path; materials are themselves module-shared
-    // inside diceFaceTextures.
-    const visual = { geom: rawGeom, materials: createD6Materials() };
-    DIE_VISUAL_CACHE.set(type, visual);
-    return visual;
-  }
-  const bundle = buildFaceBakedDie(type, rawGeom);
-  if (!bundle) return null; // caller falls back to per-die plain material
-  const visual = { geom: bundle.geom, materials: bundle.materials };
-  DIE_VISUAL_CACHE.set(type, visual);
-  return visual;
-}
-
 function createThrowDie(
   type: DiceType,
   index: number,
@@ -1541,90 +1445,6 @@ function createThrowDie(
   };
 }
 
-/**
- * Lazily-built, module-scoped Float32Array per die type for the convex-hull
- * collider. The earlier implementation built fresh THREE geometries on
- * every die — 20 D20s = 20 IcosahedronGeometry allocs + 20 disposes per
- * roll. Rapier clones the buffer into WASM memory when it builds the hull,
- * so caching the source array is safe.
- */
-const HULL_VERT_CACHE = new Map<DiceType, Float32Array>();
-
-function getHullVerts(type: DiceType): Float32Array | null {
-  const cached = HULL_VERT_CACHE.get(type);
-  if (cached) return cached;
-  let geom: THREE.BufferGeometry | null = null;
-  switch (type) {
-    case 'd4':
-      geom = new THREE.TetrahedronGeometry(0.58);
-      break;
-    case 'd8':
-      geom = new THREE.OctahedronGeometry(0.6);
-      break;
-    case 'd12':
-      geom = new THREE.DodecahedronGeometry(0.55);
-      break;
-    case 'd20':
-      geom = new THREE.IcosahedronGeometry(0.6);
-      break;
-    default:
-      return null;
-  }
-  const pos = geom.attributes.position as THREE.BufferAttribute;
-  const verts = new Float32Array(pos.array as ArrayLike<number>);
-  geom.dispose();
-  HULL_VERT_CACHE.set(type, verts);
-  return verts;
-}
-
-/** Collider edge rounding. Real dice have soft edges — a rounded hull
- *  rolls over its edges instead of pivoting on razor-sharp vertices, so
- *  dice tumble a beat longer and settle with less "clack-stop". Rapier's
- *  round shapes INFLATE outward by the radius; 0.025 on a 0.55–0.6 die
- *  is ~4%, well inside the settle-ceiling margin (DIE_RADIUS × 1.5). */
-const HULL_BEVEL = 0.025;
-
-function createColliderDesc(
-  rapier: Rapier,
-  type: DiceType,
-): InstanceType<Rapier['ColliderDesc']> {
-  if (type === 'd6') {
-    // Shrink the half-extents by the bevel so the inflated shape matches
-    // the visual cube instead of outgrowing it.
-    const h = 0.375 - HULL_BEVEL;
-    return rapier.ColliderDesc.roundCuboid(h, h, h, HULL_BEVEL);
-  }
-  if (type === 'd10' || type === 'd100') {
-    const verts = getPentagonalTrapezohedronVertices(0.6);
-    return (
-      rapier.ColliderDesc.roundConvexHull(verts, HULL_BEVEL) ??
-      rapier.ColliderDesc.convexHull(verts) ??
-      rapier.ColliderDesc.ball(0.55)
-    );
-  }
-  const verts = getHullVerts(type);
-  if (!verts) return rapier.ColliderDesc.ball(0.55);
-  const fallbackRadius = type === 'd4' ? 0.45 : 0.55;
-  return (
-    rapier.ColliderDesc.roundConvexHull(verts, HULL_BEVEL) ??
-    rapier.ColliderDesc.convexHull(verts) ??
-    rapier.ColliderDesc.ball(fallbackRadius)
-  );
-}
-
-/** Approximate bounding radius per die — used to derive the per-die
- *  settle-Y ceiling so a leaning D20 or D4 isn't measured against D6's
- *  half-edge. */
-const DIE_RADIUS: Record<DiceType, number> = {
-  d4: 0.58,
-  d6: 0.375,
-  d8: 0.6,
-  d10: 0.6,
-  d12: 0.55,
-  d20: 0.6,
-  d100: 0.6,
-};
-
 // ===========================================================================
 // Legacy decorative dice (RNG path, kept as fallback when the reduced-
 // motion setting suppresses the physics throw or Rapier WASM fails to
@@ -1786,24 +1606,6 @@ function createTweenDie(
 // ===========================================================================
 // Shared helpers
 // ===========================================================================
-
-function createGeometry(type: DiceType): THREE.BufferGeometry {
-  switch (type) {
-    case 'd4':
-      return new THREE.TetrahedronGeometry(0.58);
-    case 'd6':
-      return new THREE.BoxGeometry(0.75, 0.75, 0.75);
-    case 'd8':
-      return new THREE.OctahedronGeometry(0.6);
-    case 'd10':
-    case 'd100':
-      return createPentagonalTrapezohedronGeometry(0.6);
-    case 'd12':
-      return new THREE.DodecahedronGeometry(0.55);
-    case 'd20':
-      return new THREE.IcosahedronGeometry(0.6);
-  }
-}
 
 function computeGridPositions(count: number): [number, number, number][] {
   if (count === 0) return [];
