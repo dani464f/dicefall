@@ -631,20 +631,24 @@ function buildScene(
     new THREE.Vector2(1, 1), // resized in updateSize
     0.34, // strength — present on flames/embers, invisible on mids
     0.55, // radius
-    // Threshold above what a light-lit surface reaches: dice faces
-    // catching the key light must NOT bloom (they read as emitting).
-    // Flames/embers are additive + toneMapped:false, far above this.
-    0.95,
+    // Harness-verified: at 0.95 the candle-lit gold numerals on the dice
+    // crossed the bar and haloed like LED stickers ("weird light
+    // effect"). 1.35 sits above anything LIT PAINT reaches; the
+    // intended emitters (flames/embers/log/panes) are explicitly pushed
+    // >1.35 in tavernWorld so they keep their glow.
+    1.35,
   );
   composer.addPass(bloomPass);
   // Anamorphic streaks in linear HDR — flames + window panes smear into
   // wide blue-tinted scope-lens lines.
   const streakPass = makeStreakPass();
   composer.addPass(streakPass);
-  composer.addPass(new OutputPass());
+  const outputPass = new OutputPass();
+  composer.addPass(outputPass);
   // Print grade: chromatic aberration at the edges, orange-and-teal
   // split tone, gentle filmic S-curve.
-  composer.addPass(makeCinemaPass());
+  const cinemaPass = makeCinemaPass();
+  composer.addPass(cinemaPass);
   const vignettePass = new ShaderPass(VignetteShader);
   vignettePass.uniforms.offset!.value = 1.05;
   vignettePass.uniforms.darkness!.value = 1.18;
@@ -1033,7 +1037,23 @@ function buildScene(
   // toDataURL is called in the same task as the render, so no
   // preserveDrawingBuffer needed. Tree-shaken from production builds.
   if (import.meta.env.DEV && typeof window !== 'undefined') {
+    const debugPasses: Record<string, { enabled: boolean }> = {
+      bokeh: bokehPass,
+      bloom: bloomPass,
+      streak: streakPass,
+      cinema: cinemaPass,
+      vignette: vignettePass,
+      film: filmPass,
+    };
     (window as unknown as Record<string, unknown>).__dfDebug = {
+      /** Toggle a post pass for A/B artifact isolation. */
+      setPass: (name: string, enabled: boolean) => {
+        const p = debugPasses[name];
+        if (p) p.enabled = enabled;
+        return Object.fromEntries(
+          Object.entries(debugPasses).map(([k, v]) => [k, v.enabled]),
+        );
+      },
       frame: (dt: number) => {
         if (renderPending < 1) renderPending = 1;
         frameBody(dt);

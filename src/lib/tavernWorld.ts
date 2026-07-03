@@ -159,6 +159,11 @@ function makeFlame(
     opacity,
     fog: false, // fire IS the light source; it must read through room fog
   });
+  // HDR push: >1 color multiplier lifts flame cores past the bloom
+  // threshold (1.35) so fire glows while lit surfaces (dice numerals!)
+  // stay bloom-free. Additive sprites land these values directly in the
+  // linear HDR buffer.
+  mat.color.setRGB(1.8, 1.7, 1.6);
   const sprite = new THREE.Sprite(mat);
   sprite.scale.set(scale * 0.6, scale, 1);
   return { sprite, tex, seed, fps, baseScale: scale };
@@ -242,16 +247,18 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
     new THREE.MeshStandardMaterial({
       color: 0x0a0e16,
       emissive: 0x4a5c80,
-      // Raised alongside the bloom-threshold bump (0.82 → 0.95) so the
-      // moonlit panes stay above the bar and keep their glow.
-      emissiveIntensity: 1.4,
+      // Tracks the bloom threshold (now 1.35): panes must emit above it
+      // to keep their cold glow while lit surfaces stay bloom-free.
+      emissiveIntensity: 2.6,
       roughness: 0.4,
       metalness: 0.0,
     }),
   );
   const emberMat = track(
-    new THREE.MeshBasicMaterial({ color: 0xff5a14, toneMapped: false }),
+    new THREE.MeshBasicMaterial({ toneMapped: false }),
   );
+  // HDR ember bed — above the 1.35 bloom bar.
+  emberMat.color.setRGB(2.2, 0.75, 0.16);
 
   const add = (
     geom: THREE.BufferGeometry,
@@ -415,7 +422,7 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
         color: 0x2a1208,
         roughness: 1,
         emissive: 0xb33c08,
-        emissiveIntensity: 0.8,
+        emissiveIntensity: 1.9, // above the 1.35 bloom bar — logs glow
       }),
     );
     const logGeom = new THREE.CylinderGeometry(0.17, 0.17, 2.0, 8);

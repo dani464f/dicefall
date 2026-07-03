@@ -22,11 +22,13 @@ const STREAK_SHADER = {
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
     uTexel: { value: new THREE.Vector2(1 / 1024, 1 / 1024) },
-    // Threshold sits ABOVE anything a lit surface (including dice
-    // specular) reaches in linear HDR — only stacked flame-sprite cores
-    // and fire-lit hotspots may streak. 1.15 let dice glints smear into
-    // horizontal lines while tumbling.
-    uThreshold: { value: 1.5 },
+    // Threshold sits ABOVE anything a lit surface reaches in linear HDR.
+    // Harness-verified twice: 1.15 streaked dice speculars; 1.5 still
+    // caught the brightest candle-lit numerals as faint horizontal echo
+    // trails. 2.2 admits only true HDR emitters — flame cores (1.8×
+    // color-boosted, stacking higher), ember bed (2.2), window panes
+    // (2.6) — which is exactly the anamorphic-flare source list.
+    uThreshold: { value: 2.2 },
     uStrength: { value: 0.35 },
     uTint: { value: new THREE.Color(0.75, 0.85, 1.25) },
   },
