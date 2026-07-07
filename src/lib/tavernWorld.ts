@@ -147,6 +147,7 @@ function makeFlame(
   opacity: number,
   fps: number,
   seed: number,
+  hdrBoost = 1.45,
 ): FlameRec {
   const tex = new THREE.CanvasTexture(getFlameAtlas());
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -163,7 +164,14 @@ function makeFlame(
   // threshold (1.35) so fire glows while lit surfaces (dice numerals!)
   // stay bloom-free. Additive sprites land these values directly in the
   // linear HDR buffer.
-  mat.color.setRGB(1.8, 1.7, 1.6);
+  //
+  // The boost is PER FLAME: the hearth runs hot (1.8 — its cores cross
+  // the 2.2 streak bar, and an anamorphic line off a distant fireplace
+  // reads as lens flare). Candles run at ~1.45 — enough to bloom
+  // (>1.35), deliberately BELOW the streak bar: a streak line floating
+  // beside a frame-center table candle read as a glitch, not a flare
+  // (user-reported, screenshot-verified).
+  mat.color.setRGB(hdrBoost, hdrBoost * 0.94, hdrBoost * 0.89);
   const sprite = new THREE.Sprite(mat);
   sprite.scale.set(scale * 0.6, scale, 1);
   return { sprite, tex, seed, fps, baseScale: scale };
@@ -230,8 +238,11 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   const ironMat = track(
     new THREE.MeshStandardMaterial({ color: 0x17171a, roughness: 0.6, metalness: 0.75 }),
   );
+  // Wax darkened from 0xc9ae74: with the candle point light sitting
+  // centimetres away, high-albedo wax blew past the bloom bar and the
+  // whole cluster fused into one glow blob (user screenshot).
   const waxMat = track(
-    new THREE.MeshStandardMaterial({ color: 0xc9ae74, roughness: 0.6, metalness: 0 }),
+    new THREE.MeshStandardMaterial({ color: 0x97815a, roughness: 0.65, metalness: 0 }),
   );
   const goldMat = track(
     new THREE.MeshStandardMaterial({ color: 0xc8a14f, roughness: 0.32, metalness: 0.95 }),
@@ -239,8 +250,10 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   const darkGlassMat = track(
     new THREE.MeshStandardMaterial({ color: 0x16281a, roughness: 0.2, metalness: 0.1 }),
   );
+  // Aged parchment, not fresh paper — at 0xa8916a the scroll sat beside
+  // the candle light glowing like a light tube.
   const parchmentMat = track(
-    new THREE.MeshStandardMaterial({ color: 0xa8916a, roughness: 0.88, metalness: 0 }),
+    new THREE.MeshStandardMaterial({ color: 0x84704d, roughness: 0.9, metalness: 0 }),
   );
   // Window panes: cold moonlight membrane, emissive so bloom catches it.
   const paneMat = track(
@@ -368,8 +381,9 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
     scale: number,
     opacity: number,
     fps: number,
+    hdrBoost?: number,
   ): FlameRec => {
-    const rec = makeFlame(scale, opacity, fps, allFlames.length);
+    const rec = makeFlame(scale, opacity, fps, allFlames.length, hdrBoost);
     allFlames.push(rec);
     track(rec.sprite.material);
     track(rec.tex);
@@ -447,11 +461,11 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
     // directly in the main group at the firebox mouth). Fast flipbook —
     // a hearth fire churns.
     const fwx = fx + 0.45;
-    const f1 = newFlame(2.5, 0.9, 16);
+    const f1 = newFlame(2.5, 0.9, 16, 1.8);
     f1.sprite.position.set(fwx, FLOOR_Y + 1.9, fz);
-    const f2 = newFlame(1.7, 0.75, 13);
+    const f2 = newFlame(1.7, 0.75, 13, 1.8);
     f2.sprite.position.set(fwx, FLOOR_Y + 1.5, fz - 0.6);
-    const f3 = newFlame(1.45, 0.75, 14);
+    const f3 = newFlame(1.45, 0.75, 14, 1.8);
     f3.sprite.position.set(fwx, FLOOR_Y + 1.45, fz + 0.65);
     fire.sprites.push(f1, f2, f3);
     group.add(f1.sprite, f2.sprite, f3.sprite);
@@ -468,9 +482,11 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
     const emberPtsMat = track(
       new THREE.PointsMaterial({
         color: 0xff8a30,
-        size: 0.05,
+        // Subdued: at 0.05/0.85 the rising embers read as stray glowing
+        // specks over the table edge from the seated angle.
+        size: 0.038,
         transparent: true,
-        opacity: 0.85,
+        opacity: 0.65,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         fog: false,
@@ -637,7 +653,7 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
       // (light budget) — the flame sprite + bloom carries it.
       const cGeom = new THREE.CylinderGeometry(0.07, 0.08, 0.3, 8);
       add(cGeom, waxMat, x + 0.5 * Math.cos(ry), FLOOR_Y + 2.25, z + 0.5 * Math.sin(ry));
-      const fl = newFlame(0.22, 0.9, 10);
+      const fl = newFlame(0.22, 0.9, 10, 1.55);
       fl.sprite.position.set(x + 0.5 * Math.cos(ry), FLOOR_Y + 2.52, z + 0.5 * Math.sin(ry));
       farCandleSprites.push(fl);
       group.add(fl.sprite);
@@ -753,7 +769,7 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
       const px = Math.cos(a) * 1.5;
       const pz = cz + Math.sin(a) * 1.5;
       add(candleGeom, waxMat, px, cy + 0.2, pz);
-      const fl = newFlame(0.3, 0.9, 10);
+      const fl = newFlame(0.3, 0.9, 10, 1.6);
       fl.sprite.position.set(px, cy + 0.5, pz);
       chandelier.sprites.push(fl);
       group.add(fl.sprite);
@@ -765,10 +781,13 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
   // ==========================================================================
   // TABLETOP DRESSING — beside the tray (unchanged positions).
   // ==========================================================================
+  // Light dimmed 9 → 5.5 and its anchor raised above the wax tops — the
+  // emitter used to sit INSIDE the cluster, nuking the wax at point-blank
+  // range.
   const tableCandles = {
-    light: new THREE.PointLight(0xffb870, 9, 7, 2.0),
+    light: new THREE.PointLight(0xffb870, 5.5, 7, 2.0),
     sprites: [] as FlameRec[],
-    baseIntensity: 9,
+    baseIntensity: 5.5,
   };
   {
     const positions: Array<[number, number, number]> = [
@@ -783,12 +802,17 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
       c.position.set(px, h / 2, pz);
       c.castShadow = true;
       group.add(c);
-      const fl = newFlame(0.26, 0.95, 12);
+      // 1.55: frame-center flames — bloom clearly (>1.35), never streak
+      // (flame + wax highlight sums stay under 2.2). The hearth's 1.8 is
+      // reserved for the one fire that's far away and diegetic.
+      const fl = newFlame(0.26, 0.95, 12, 1.55);
       fl.sprite.position.set(px, h + 0.13, pz);
       tableCandles.sprites.push(fl);
       group.add(fl.sprite);
     }
-    tableCandles.light.position.set(-4.55, 0.95, 1.0);
+    // y=1.15 keeps the emitter clear of the wax tops (tallest is 0.5) so
+    // falloff at the wax surface stays sane.
+    tableCandles.light.position.set(-4.55, 1.15, 1.0);
     group.add(tableCandles.light);
 
     const mugBody = new THREE.CylinderGeometry(0.18, 0.21, 0.42, 14);
@@ -863,7 +887,7 @@ export function buildTavernWorld(opts: BuildOptions): TavernWorld {
       color: 0xffc890,
       size: 0.028,
       transparent: true,
-      opacity: 0.26,
+      opacity: 0.2,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       sizeAttenuation: true,

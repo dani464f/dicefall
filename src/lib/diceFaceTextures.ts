@@ -194,12 +194,14 @@ export function createD6Materials(): THREE.MeshPhysicalMaterial[] {
       new THREE.MeshPhysicalMaterial({
         map: createD6FaceTexture(value),
         normalMap: getSquarePillowNormal(), // rounded-edge light wrap
-        roughness: 0.62,
+        roughness: 0.65,
         metalness: 0.08,
-        specularIntensity: 0.4,
-        clearcoat: 0.35,
-        clearcoatRoughness: 0.32,
-        envMapIntensity: 0.35,
+        // Kept in lockstep with dieFaceMaterials — see the bloom-bar
+        // note there.
+        specularIntensity: 0.25,
+        clearcoat: 0.18,
+        clearcoatRoughness: 0.4,
+        envMapIntensity: 0.3,
       }),
   );
   return SHARED_D6_MATERIALS;

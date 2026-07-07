@@ -142,7 +142,10 @@ const LIGHTING_PRESETS: Record<string, LightingConfig> = {
     hemisphere: { sky: 0xbb8a5a, ground: 0x160b06, intensity: 0.38 },
     key: {
       color: 0xffc890,
-      intensity: 150,
+      // 130, not 150: with a full tray the nearest dice numerals
+      // reflected the key over the bloom threshold and haloed. Key and
+      // numeral paint (DIE_INK) are tuned as a pair.
+      intensity: 130,
       position: new THREE.Vector3(-3.2, 4.6, 3.4),
     },
     rim: {

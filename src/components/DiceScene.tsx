@@ -599,8 +599,8 @@ function buildScene(
   composer.addPass(bokehPass);
   const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(1, 1), // resized in updateSize
-    0.34, // strength — present on flames/embers, invisible on mids
-    0.55, // radius
+    0.28, // strength — present on flames/embers, invisible on mids
+    0.5, // radius
     // Harness-verified: at 0.95 the candle-lit gold numerals on the dice
     // crossed the bar and haloed like LED stickers ("weird light
     // effect"). 1.35 sits above anything LIT PAINT reaches; the

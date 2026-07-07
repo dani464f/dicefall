@@ -24,7 +24,13 @@ import type { DiceType } from '../types/dice';
  */
 
 const DIE_BG = '#1c1410';
-const DIE_INK = '#f1ce85';
+// Numeral paint radiance is bloom-critical: at #f1ce85 the nearest dice
+// to the candle key reflected over the 1.35 bloom bar and every numeral
+// grew a halo ("weird light reflections", user report #3). Paint and key
+// intensity (sceneResolver, 130) are tuned as a pair to stay under the
+// bar at the closest tray position. Contrast on near-black faces is
+// unaffected.
+const DIE_INK = '#d0b273';
 
 const FACE_TEXTURES = new Map<string, THREE.CanvasTexture>();
 
@@ -469,12 +475,18 @@ export function buildFaceBakedDie(
         // Baked rim bevel — light wraps the face borders like a real
         // die's rounded edge (see the pillow-normal generators above).
         normalMap: bevelNormal,
-        roughness: 0.62,
+        roughness: 0.65,
         metalness: 0.1,
-        specularIntensity: 0.4,
-        clearcoat: 0.35,
-        clearcoatRoughness: 0.32,
-        envMapIntensity: 0.35,
+        // Second despec pass: with a full tray the nearest faces sit
+        // ~4.5u from the key and the clearcoat lobe peaked over the
+        // 1.35 bloom bar — whole faces washed into pale glow. Pass-
+        // isolated with the frame harness: bloom-off was clean,
+        // bloom-on blew, so the fix is keeping face radiance under the
+        // bar, not touching the chain.
+        specularIntensity: 0.25,
+        clearcoat: 0.18,
+        clearcoatRoughness: 0.4,
+        envMapIntensity: 0.3,
       }),
   );
 
