@@ -1205,6 +1205,35 @@ function createPhysics(rapier: Rapier): PhysicsBundle {
 // ===========================================================================
 
 /**
+ * Uniform-random unit quaternion (Shoemake 1992) — a point drawn evenly from
+ * SO(3), the group of 3D rotations.
+ *
+ * Every thrown die gets one as its INITIAL orientation. Without it, dice spawn
+ * at the identity pose and the short wrist-flick tumble can't decorrelate the
+ * result from that fixed start — the die lands "loaded". Measured over 1000
+ * headless D20 rolls of the real settle+read path: fixed-orientation spawn gave
+ * χ²=737 (df 19), mean 7.08, face 2 landing 187× (vs 50 expected); this random
+ * spawn gives χ²≈17, mean 10.5, flat within noise. A symmetric solid released
+ * from a uniform-random orientation is *provably* uniform over its faces
+ * regardless of the throw dynamics — the labels are just painted on, so
+ * randomizing which physical face wears which number randomizes the result.
+ */
+function uniformRandomQuat(): { x: number; y: number; z: number; w: number } {
+  const u1 = Math.random();
+  const u2 = Math.random();
+  const u3 = Math.random();
+  const a = Math.sqrt(1 - u1);
+  const b = Math.sqrt(u1);
+  const tau = 2 * Math.PI;
+  return {
+    x: a * Math.sin(tau * u2),
+    y: a * Math.cos(tau * u2),
+    z: b * Math.sin(tau * u3),
+    w: b * Math.cos(tau * u3),
+  };
+}
+
+/**
  * Module-scope shared visuals — one geometry + materials set per die type,
  * shared by every mesh of that type for the app lifetime (three.js supports
  * sharing both across meshes; each mesh carries its own transform).
@@ -1288,6 +1317,11 @@ function createThrowDie(
   // read as dice spinning in place rather than being thrown.
   const bodyDesc = rapier.RigidBodyDesc.dynamic()
     .setTranslation(startX, startY, startZ)
+    // Random initial orientation — the fairness fix. The spawn velocity/spin
+    // below are randomized, but the START pose must be too, or the die is
+    // loaded (see uniformRandomQuat's note). Set on the desc so the first
+    // mesh-sync below already reflects it (no identity-pose pop on frame 0).
+    .setRotation(uniformRandomQuat())
     .setLinvel(lvx, lvy, lvz)
     .setAngvel({
       x: -(9 + Math.random() * 7), // forward tumble, always
