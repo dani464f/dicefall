@@ -3,6 +3,14 @@ import type { DiceType } from '../types/dice';
 import { getPentagonalTrapezohedronFaceNormals } from './d10Geometry';
 
 /**
+ * Face-read tables cover the user-facing DiceType set plus two INTERNAL
+ * percentile roles. A d100 isn't one die — it's a pair: a tens die reading
+ * {0,10,…,90} and a units die reading {0,…,9}, combined into 1–100 (00+0 =
+ * 100). Both are physical d10 trapezohedra; only their face labels differ.
+ */
+export type FaceTableKey = DiceType | 'd100tens' | 'd100units';
+
+/**
  * After a die settles, we read which face is pointing "up" (or "down" for the
  * tetrahedron). This module precomputes a table of face normals in each die's
  * local frame and provides a quaternion → face-value lookup.
@@ -193,7 +201,9 @@ function buildD10(): DieTable {
 }
 
 function buildD100(): DieTable {
-  // Same geometry as D10; each face value × 10 (10, 20, …, 100).
+  // Same geometry as D10; each face value × 10 (10, 20, …, 100). Retained
+  // for the legacy/reduced-motion decorative path; the physics percentile
+  // roll uses the tens+units tables below instead.
   const base = buildD10();
   return {
     readDirection: base.readDirection,
@@ -204,8 +214,34 @@ function buildD100(): DieTable {
   };
 }
 
-let TABLES: Partial<Record<DiceType, DieTable>> | null = null;
-function getTables(): Partial<Record<DiceType, DieTable>> {
+// Percentile roles. The base D10 labels faces 1–10; here we remap them onto
+// a tens die {0,10,…,90} and a units die {0,…,9} (value 10 → 0 on both, so
+// the "00" / "0" faces line up). Combined result = tens + units, with the
+// 00+0 landing read as 100 (see the commit path in DiceScene).
+function buildD100Tens(): DieTable {
+  const base = buildD10();
+  return {
+    readDirection: base.readDirection,
+    faces: base.faces.map((f) => ({
+      localNormal: f.localNormal,
+      value: (f.value % 10) * 10,
+    })),
+  };
+}
+
+function buildD100Units(): DieTable {
+  const base = buildD10();
+  return {
+    readDirection: base.readDirection,
+    faces: base.faces.map((f) => ({
+      localNormal: f.localNormal,
+      value: f.value % 10,
+    })),
+  };
+}
+
+let TABLES: Partial<Record<FaceTableKey, DieTable>> | null = null;
+function getTables(): Partial<Record<FaceTableKey, DieTable>> {
   if (TABLES) return TABLES;
   TABLES = {
     d4: buildFromGeometry(new THREE.TetrahedronGeometry(1, 0), 4, 'down'),
@@ -215,6 +251,8 @@ function getTables(): Partial<Record<DiceType, DieTable>> {
     d12: buildFromGeometry(new THREE.DodecahedronGeometry(1, 0), 12, 'up'),
     d20: buildFromGeometry(new THREE.IcosahedronGeometry(1, 0), 20, 'up'),
     d100: buildD100(),
+    d100tens: buildD100Tens(),
+    d100units: buildD100Units(),
   };
   return TABLES;
 }
@@ -236,7 +274,7 @@ export interface QuatLike {
  */
 export function getUpwardFaceValue(
   quat: QuatLike,
-  diceType: DiceType,
+  diceType: FaceTableKey,
 ): number | null {
   const table = getTables()[diceType];
   if (!table) return null;
@@ -262,7 +300,7 @@ export function getUpwardFaceValue(
  * Returns null for unrecognized types.
  */
 export function getFaceEntries(
-  diceType: DiceType,
+  diceType: FaceTableKey,
 ): ReadonlyArray<{ readonly localNormal: THREE.Vector3; readonly value: number }> | null {
   const table = getTables()[diceType];
   if (!table) return null;

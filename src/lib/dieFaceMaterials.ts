@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getFaceEntries } from './faceDetection';
+import { getFaceEntries, type FaceTableKey } from './faceDetection';
 import type { DiceType } from '../types/dice';
 
 /**
@@ -182,8 +182,8 @@ const UV_APEX: [number, number] = [0.5, 0.5 - UV_R];
 const UV_BL: [number, number] = [0.5 - UV_R * UV_COS30, 0.5 + UV_R * UV_SIN30];
 const UV_BR: [number, number] = [0.5 + UV_R * UV_COS30, 0.5 + UV_R * UV_SIN30];
 
-function createTriangleFaceTexture(value: number): THREE.CanvasTexture {
-  const cacheKey = `${value}`;
+function createTriangleFaceTexture(label: string): THREE.CanvasTexture {
+  const cacheKey = label;
   const cached = FACE_TEXTURES.get(cacheKey);
   if (cached) return cached;
 
@@ -203,7 +203,11 @@ function createTriangleFaceTexture(value: number): THREE.CanvasTexture {
   // radius is R/2 = 0.23 in UV → ~ 59 px on a 256 canvas. Keep the glyph
   // below ~50 px tall so it never leaks across an edge.
   const px =
-    value >= 100 ? size * 0.18 : value >= 10 ? size * 0.22 : size * 0.26;
+    label.length >= 3
+      ? size * 0.18
+      : label.length === 2
+        ? size * 0.22
+        : size * 0.26;
 
   ctx.fillStyle = DIE_INK;
   ctx.font = `800 ${Math.round(px)}px Georgia, "Times New Roman", serif`;
@@ -218,7 +222,7 @@ function createTriangleFaceTexture(value: number): THREE.CanvasTexture {
   // Some browsers don't expose the actualBoundingBox* values; fall back to
   // an approximate offset (~22 % of font px) that works for most serif
   // digits when those metrics are missing.
-  const metrics = ctx.measureText(String(value));
+  const metrics = ctx.measureText(label);
   const ascent =
     (metrics as TextMetrics).actualBoundingBoxAscent ?? px * 0.7;
   const descent =
@@ -227,10 +231,12 @@ function createTriangleFaceTexture(value: number): THREE.CanvasTexture {
   // center is at cy.
   const drawY = cy + (ascent - descent) / 2;
 
-  ctx.fillText(String(value), cx, drawY);
+  ctx.fillText(label, cx, drawY);
 
-  // Underline ambiguous numerals (6 / 9 / 11) so orientation is clear.
-  if (value === 6 || value === 9 || value === 11) {
+  // Underline ambiguous numerals (6 / 9 / 11) so orientation is clear. Keyed
+  // on the label string: two-digit faces ("60", "90") read unambiguously and
+  // aren't underlined; the units die's single "6" / "9" are.
+  if (label === '6' || label === '9' || label === '11') {
     const w = px * 0.45;
     const h = px * 0.08;
     // Position just under the glyph descender, still inside the triangle.
@@ -398,9 +404,16 @@ export interface FaceMaterialBundle {
 export function buildFaceBakedDie(
   diceType: DiceType,
   baseGeom: THREE.BufferGeometry,
+  opts?: { tableKey?: FaceTableKey; label?: (value: number) => string },
 ): FaceMaterialBundle | null {
   if (diceType === 'd6') return null;
-  const entries = getFaceEntries(diceType);
+  // Face values come from `tableKey` (defaults to diceType); the painted
+  // glyph comes from `label` (defaults to the plain number). The percentile
+  // roles pass a tens table + zero-padded label, or a units table + plain
+  // label, while sharing the d100 trapezohedron geometry + bevel path.
+  const tableKey = opts?.tableKey ?? diceType;
+  const labelFn = opts?.label ?? ((v: number) => String(v));
+  const entries = getFaceEntries(tableKey);
   if (!entries || entries.length === 0) return null;
 
   const mapping = computeTriangleFaceMapping(baseGeom, entries);
@@ -471,7 +484,7 @@ export function buildFaceBakedDie(
   const materials = entries.map(
     (entry) =>
       new THREE.MeshPhysicalMaterial({
-        map: createTriangleFaceTexture(entry.value),
+        map: createTriangleFaceTexture(labelFn(entry.value)),
         // Baked rim bevel — light wraps the face borders like a real
         // die's rounded edge (see the pillow-normal generators above).
         normalMap: bevelNormal,

@@ -51,11 +51,29 @@ export interface DieVisual {
   materials: THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[];
 }
 
-const DIE_VISUAL_CACHE = new Map<DiceType, DieVisual>();
+/** Visual keys extend DiceType with the two internal percentile roles —
+ *  each is a d100 trapezohedron with a distinct face-label set. */
+export type DieVisualKey = DiceType | 'd100tens' | 'd100units';
 
-export function getSharedDieVisual(type: DiceType): DieVisual | null {
+const DIE_VISUAL_CACHE = new Map<DieVisualKey, DieVisual>();
+
+export function getSharedDieVisual(type: DieVisualKey): DieVisual | null {
   const cached = DIE_VISUAL_CACHE.get(type);
   if (cached) return cached;
+  // Percentile roles: same geometry as d100, different painted faces —
+  // tens die reads/shows 00–90, units die 0–9.
+  if (type === 'd100tens' || type === 'd100units') {
+    const rawGeom = createGeometry('d100');
+    const label =
+      type === 'd100tens'
+        ? (v: number) => String(v).padStart(2, '0')
+        : (v: number) => String(v);
+    const bundle = buildFaceBakedDie('d100', rawGeom, { tableKey: type, label });
+    if (!bundle) return null;
+    const visual = { geom: bundle.geom, materials: bundle.materials };
+    DIE_VISUAL_CACHE.set(type, visual);
+    return visual;
+  }
   const rawGeom = createGeometry(type);
   if (type === 'd6') {
     // Pip-baked BoxGeometry path; materials are themselves module-shared

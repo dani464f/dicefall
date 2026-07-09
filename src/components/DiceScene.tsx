@@ -708,21 +708,33 @@ function buildScene(
     // Size the tray to the throw BEFORE spawning — dice spawn relative to
     // the new bounds. Resizing only ever happens here, with the tray
     // empty, so settled dice are never caught outside a shrinking wall.
-    applyTrayLayout(trayInnerFor(req.quantity));
+    // d100 is thrown as a percentile PAIR per rolled die — a tens die (00–90)
+    // and a units die (0–9) — so it spawns 2 physical dice per quantity.
+    // Every other type spawns one. The tray sizes to the physical count.
+    const isPercentile = req.diceType === 'd100';
+    const physicalCount = isPercentile ? req.quantity * 2 : req.quantity;
+    applyTrayLayout(trayInnerFor(physicalCount));
     // Throw beat: one lean-in over the dice, then hold.
     cutToShot('lean', false);
 
     const dice: ThrowDie[] = [];
-    for (let i = 0; i < req.quantity; i++) {
+    for (let i = 0; i < physicalCount; i++) {
+      // Pairs are consecutive: even index = tens die, odd index = units die.
+      const role: 'd100tens' | 'd100units' | undefined = isPercentile
+        ? i % 2 === 0
+          ? 'd100tens'
+          : 'd100units'
+        : undefined;
       const d = createThrowDie(
         req.diceType,
         i,
-        req.quantity,
+        physicalCount,
         physics,
         resolved.dice.color,
         resolved.dice.roughness,
         resolved.dice.metalness,
         trayInner,
+        role,
       );
       scene.add(d.mesh);
       dice.push(d);
@@ -962,13 +974,32 @@ function buildScene(
         if (allReady || timedOut) {
           const t = activeThrow; // capture for closures below
           t.committed = true;
-          const faces = DICE_FACES[t.request.diceType];
-          const values = t.dice.map((d) => {
-            const v = d.getFaceValue();
-            // ambiguous landing — fall back to a uniform random face so the
-            // user still gets a result rather than a freeze.
-            return v ?? Math.floor(Math.random() * faces) + 1;
-          });
+          // Read each die. d100 combines consecutive (tens, units) pairs into
+          // a 1–100 percentile (00 + 0 → 100); every other type reports its
+          // own face. The `?? random` guard covers a rare ambiguous landing so
+          // a roll never hangs on a freeze.
+          let values: number[];
+          if (t.request.diceType === 'd100') {
+            values = [];
+            for (let k = 0; k < t.request.quantity; k++) {
+              const tensDie = t.dice[k * 2];
+              const unitsDie = t.dice[k * 2 + 1];
+              const tens =
+                tensDie?.getFaceValue() ?? Math.floor(Math.random() * 10) * 10;
+              const units =
+                unitsDie?.getFaceValue() ?? Math.floor(Math.random() * 10);
+              const pct = tens + units;
+              values.push(pct === 0 ? 100 : pct);
+            }
+          } else {
+            const faces = DICE_FACES[t.request.diceType];
+            values = t.dice.map((d) => {
+              const v = d.getFaceValue();
+              // ambiguous landing — fall back to a uniform random face so the
+              // user still gets a result rather than a freeze.
+              return v ?? Math.floor(Math.random() * faces) + 1;
+            });
+          }
           // Force already-settled bodies to sleep so the sim-gating check
           // above can idle the world deterministically instead of waiting
           // out Rapier's own sleep timer. A timed-out die that's still
@@ -1259,8 +1290,13 @@ function createThrowDie(
   diceRoughness: number,
   diceMetalness: number,
   trayInner: number,
+  role?: 'd100tens' | 'd100units',
 ): ThrowDie {
   const { rapier, world } = physics;
+  // d100 is thrown as a tens+units pair; `role` picks which face labels this
+  // die wears and which table its face is read from. Physical shape, collider,
+  // and settle radius stay the base d100 trapezohedron either way.
+  const readKey = role ?? type;
 
   // Shared geometry + materials per die type (see DIE_VISUAL_CACHE). The
   // fallback below only triggers if a face table is missing — every current
@@ -1268,7 +1304,7 @@ function createThrowDie(
   let geom: THREE.BufferGeometry;
   let materials: THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[];
   let ownsVisual = false;
-  const sharedVisual = getSharedDieVisual(type);
+  const sharedVisual = getSharedDieVisual(readKey);
   if (sharedVisual) {
     geom = sharedVisual.geom;
     materials = sharedVisual.materials;
@@ -1445,7 +1481,7 @@ function createThrowDie(
     },
     settlementState() {
       if (settledFrames < SETTLE_FRAMES) return 'rolling';
-      const v = getUpwardFaceValue(body.rotation(), type);
+      const v = getUpwardFaceValue(body.rotation(), readKey);
       if (v !== null) return 'settled';
       return nudgeAttempts >= NUDGE_MAX ? 'stuck' : 'leaning';
     },
@@ -1465,7 +1501,7 @@ function createThrowDie(
       return true;
     },
     getFaceValue() {
-      return getUpwardFaceValue(body.rotation(), type);
+      return getUpwardFaceValue(body.rotation(), readKey);
     },
     dispose() {
       world.removeRigidBody(body);
