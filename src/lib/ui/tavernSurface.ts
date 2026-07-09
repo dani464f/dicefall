@@ -69,8 +69,16 @@ export function tavernPanelStyle(
 ): CSSProperties {
   const lifted = opts?.tone !== 'inset';
   return {
+    // Phase D: frosted dark glass. The fill alpha drops (76/88 → 52/68)
+    // and a backdrop blur takes over the legibility work, so the tavern
+    // scene glows through the panel instead of being walled off. On the
+    // rare engine without backdrop-filter the lower-alpha gradient alone
+    // still reads fine over the dark scene — graceful degrade, no
+    // @supports fork needed.
     background:
-      'linear-gradient(180deg, color-mix(in srgb, var(--color-tray-deep) 76%, transparent) 0%, color-mix(in srgb, var(--color-tray-deep) 88%, #000 12%) 100%)',
+      'linear-gradient(180deg, color-mix(in srgb, var(--color-tray-deep) 52%, transparent) 0%, color-mix(in srgb, var(--color-tray-deep) 68%, rgba(0,0,0,0.45)) 100%)',
+    backdropFilter: 'blur(12px) saturate(1.2)',
+    WebkitBackdropFilter: 'blur(12px) saturate(1.2)', // iOS Safari
     border: `1px solid color-mix(in srgb, var(--color-gold) ${lifted ? 42 : 30}%, transparent)`,
     borderRadius: 12,
     boxShadow: lifted

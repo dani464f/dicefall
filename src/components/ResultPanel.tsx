@@ -59,7 +59,7 @@ export function ResultPanel({ result, isRolling }: ResultPanelProps) {
       <div className="grid grid-cols-2 gap-3 items-center text-center">
         <div className="flex flex-col items-center gap-1">
           <p className={tavernSectionLabel}>Result</p>
-          <p className="font-display text-2xl text-ivory tabular-nums leading-none">
+          <p className="font-display font-semibold text-2xl text-ivory tabular-nums tracking-[0.05em] leading-none">
             {expression}
           </p>
         </div>
@@ -72,7 +72,7 @@ export function ResultPanel({ result, isRolling }: ResultPanelProps) {
         >
           <p className={tavernSectionLabel}>Total</p>
           <p
-            className="font-display text-3xl text-gold tabular-nums leading-none"
+            className="font-display font-semibold text-3xl text-gold tabular-nums tracking-[0.04em] leading-none"
             style={{
               textShadow:
                 '0 0 12px color-mix(in srgb, var(--color-gold) 32%, transparent)',

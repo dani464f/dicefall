@@ -261,15 +261,25 @@ export default function App() {
         <CircleButton label="Recent rolls" onClick={() => setOpenSheet('history')}>
           <HamburgerIcon />
         </CircleButton>
-        <h1
-          className="font-display text-xl text-gold uppercase tracking-[0.32em]"
-          style={{
-            textShadow:
-              '0 0 12px color-mix(in srgb, var(--color-gold) 25%, transparent)',
-          }}
-        >
-          Tavern
-        </h1>
+        {/* Phase D wordmark: Cinzel (via --font-display) with a flanking
+            tendril either side. Ornaments are aria-hidden; the h1 text
+            stays the sole accessible name. */}
+        <div className="flex items-center gap-2.5">
+          <WordmarkTendril />
+          <h1
+            className="font-display font-bold text-xl text-gold uppercase tracking-[0.32em]"
+            style={{
+              textShadow:
+                '0 0 12px color-mix(in srgb, var(--color-gold) 25%, transparent)',
+              // Optically re-center: wide tracking adds a trailing space
+              // after the last glyph; nudge half a track right.
+              marginRight: '-0.16em',
+            }}
+          >
+            Tavern
+          </h1>
+          <WordmarkTendril flip />
+        </div>
         <CircleButton label="Presets" onClick={() => setOpenSheet('presets')}>
           <PouchIcon />
         </CircleButton>
@@ -578,46 +588,109 @@ interface RollButtonProps {
 }
 
 function RollButton({ onClick, disabled, rolling }: RollButtonProps) {
+  // Sheen sweep: the band span is remounted per press (key bump) so its
+  // animation restarts reliably even under rapid taps. The global
+  // reduced-motion rules truncate the keyframe to 0.01ms — reads as off.
+  const [sheenKey, setSheenKey] = useState(0);
   return (
     <button
       type="button"
       onClick={onClick}
+      onPointerDown={() => {
+        if (!disabled) setSheenKey((k) => k + 1);
+      }}
       disabled={disabled}
-      className="relative w-full rounded-2xl py-3 transition-all duration-100 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
+      className="relative w-full rounded-2xl py-3 overflow-hidden transition-all duration-100 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
       style={{
-        // Three-stop gold gradient derived from --color-gold so a cool-palette
-        // skin (Obsidian Court) gets a sapphire-leaning button automatically.
-        //
-        // B1 refinement: highlight pulled from 30% white → 18% so the cap
-        // reads as warm brass rather than shiny chrome; bottom darkened
-        // less aggressively (35% → 28%); outer shadow halved
-        // (0 8px 24px /0.55 → 0 4px 14px /0.4) — same energy, less weight.
+        // Phase D remaster: five-stop gold — a bright specular cap, a
+        // brass mid, and a shadowed base — still derived from
+        // --color-gold so Obsidian/Arcane re-tint automatically. Outer
+        // shadow deepened one step to seat the heavier face.
         background:
-          'linear-gradient(180deg, color-mix(in srgb, var(--color-gold) 82%, white 18%) 0%, var(--color-gold) 45%, color-mix(in srgb, var(--color-gold) 72%, black 28%) 100%)',
-        border: '1px solid rgba(0,0,0,0.45)',
+          'linear-gradient(180deg, color-mix(in srgb, var(--color-gold) 72%, white 28%) 0%, color-mix(in srgb, var(--color-gold) 90%, white 10%) 16%, var(--color-gold) 50%, color-mix(in srgb, var(--color-gold) 80%, black 20%) 84%, color-mix(in srgb, var(--color-gold) 66%, black 34%) 100%)',
+        border: '1px solid rgba(0,0,0,0.5)',
         boxShadow:
-          '0 4px 14px rgba(0,0,0,0.4), inset 0 1px 0 color-mix(in srgb, var(--color-gold) 30%, white 70%), inset 0 -1px 2px rgba(0,0,0,0.32)',
+          '0 6px 18px rgba(0,0,0,0.45), inset 0 1px 0 color-mix(in srgb, var(--color-gold) 25%, white 75%), inset 0 -2px 3px rgba(0,0,0,0.35)',
       }}
     >
+      {/* Inner bevel ring — a hairline highlight inset from the edge so the
+          face reads as a struck coin, not a flat gradient. */}
       <span
-        className="block font-display text-2xl uppercase tracking-[0.4em] leading-none"
+        aria-hidden
+        className="absolute inset-[3px] rounded-xl pointer-events-none"
+        style={{
+          border:
+            '1px solid color-mix(in srgb, var(--color-gold) 55%, white 20%)',
+          opacity: 0.55,
+          boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.18)',
+        }}
+      />
+      {/* Specular sheen band, swept across on press. */}
+      {sheenKey > 0 && (
+        <span
+          key={sheenKey}
+          aria-hidden
+          className="absolute inset-y-0 left-0 w-1/3 pointer-events-none"
+          style={{
+            background:
+              'linear-gradient(105deg, transparent 0%, rgba(255,255,255,0.38) 50%, transparent 100%)',
+            animation: 'rollSheen 650ms ease-out both',
+          }}
+        />
+      )}
+      <span
+        className="relative block font-display font-bold text-2xl uppercase tracking-[0.4em] leading-none"
         style={{
           color: 'var(--color-tray-deep)',
           textShadow:
             '0 1px 0 color-mix(in srgb, var(--color-gold) 30%, white 60%)',
+          // Optical centering under the wide tracking (trailing space).
+          marginRight: '-0.4em',
         }}
       >
         {rolling ? 'Rolling' : 'Roll'}
       </span>
       <span
-        className="block text-2xs uppercase tracking-[0.32em] mt-1"
+        className="relative block text-2xs uppercase tracking-[0.32em] mt-1"
         style={{
           color: 'color-mix(in srgb, var(--color-tray-deep) 60%, transparent)',
+          marginRight: '-0.32em',
         }}
       >
         Tap to roll
       </span>
     </button>
+  );
+}
+
+/**
+ * Small tendril flourish flanking the top-bar wordmark — a hairline
+ * growing into a single filigree curl. `flip` mirrors it for the
+ * right-hand side. Gold-tinted via currentColor; dimmed by the shared
+ * ornament opacity so it whispers instead of competing with the title.
+ */
+function WordmarkTendril({ flip = false }: { flip?: boolean }) {
+  return (
+    <svg
+      width="22"
+      height="10"
+      viewBox="0 0 22 10"
+      fill="none"
+      aria-hidden
+      style={{
+        color: 'color-mix(in srgb, var(--color-gold) 55%, transparent)',
+        opacity: 'var(--ornament-opacity)',
+        transform: flip ? 'scaleX(-1)' : undefined,
+      }}
+    >
+      <path d="M1 5 H 10" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+      <path
+        d="M10 5 C 14 2.2, 18 3, 19.5 5 C 20.4 6.3, 19.6 7.8, 18.2 7.6 C 17.1 7.4, 16.8 6.2, 17.6 5.7"
+        stroke="currentColor"
+        strokeWidth="1"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
 

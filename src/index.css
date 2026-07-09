@@ -25,7 +25,11 @@
   --color-danger: #a6413b;
   --color-special: #6f8cff;
 
-  --font-display: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+  /* Phase D: Cinzel — a Trajan-descendant lapidary face; its caps and
+   * lining numerals are the single biggest "art-directed" signal in the
+   * UI. Cormorant Garamond stays as the metric-adjacent serif fallback
+   * for the instant before the woff2 arrives. */
+  --font-display: "Cinzel", "Cormorant Garamond", Georgia, "Times New Roman", serif;
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
   /* Type scale (px values mapped to rem so they survive root-size shifts).
@@ -179,6 +183,24 @@ html[data-reduced-motion='true'] *::after {
   }
   100% {
     transform: translate3d(0px, 0px, 0) rotate(0deg) scale(1);
+  }
+}
+
+/* Roll-button sheen — a specular band sweeping across the gold cap on
+ * press. The span is remounted per press (React key bump) so the
+ * animation restarts reliably; the global reduced-motion rules above
+ * truncate it to 0.01ms, which reads as "off". */
+@keyframes rollSheen {
+  0% {
+    transform: translateX(-130%) skewX(-18deg);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(230%) skewX(-18deg);
+    opacity: 0;
   }
 }
 

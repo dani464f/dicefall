@@ -114,11 +114,20 @@ export function Sheet({ open, onClose, title, children }: SheetProps) {
         ref={dialogRef}
         onKeyDown={onDialogKeyDown}
         className={
-          'relative w-full max-w-md max-h-[85vh] flex flex-col rounded-t-2xl bg-bg transition-transform duration-300 ease-out ' +
+          'relative w-full max-w-md max-h-[85vh] flex flex-col rounded-t-2xl transition-transform duration-300 ease-out ' +
           (open ? 'translate-y-0' : 'translate-y-full')
         }
         style={{
           paddingBottom: 'env(safe-area-inset-bottom)',
+          // Phase D: frosted glass drawer — the tavern glows through the
+          // sheet instead of being blacked out. Alpha stays high (86%)
+          // because list text scrolls over this surface; the blur carries
+          // the depth cue. Engines without backdrop-filter just get a
+          // slightly translucent solid — still readable over the dark bg.
+          background:
+            'linear-gradient(180deg, color-mix(in srgb, var(--color-bg) 86%, transparent) 0%, color-mix(in srgb, var(--color-bg) 92%, transparent) 100%)',
+          backdropFilter: 'blur(16px) saturate(1.15)',
+          WebkitBackdropFilter: 'blur(16px) saturate(1.15)',
           // B1: lighter drop shadow + a hairline gold top edge ornament
           // so the sheet feels "stamped" rather than walled-off.
           boxShadow: '0 -6px 22px rgba(0,0,0,0.42)',
